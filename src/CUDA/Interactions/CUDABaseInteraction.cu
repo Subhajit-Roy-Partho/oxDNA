@@ -18,8 +18,8 @@
 #include <thrust/reduce.h>
 #include <thrust/transform_reduce.h>
 
-__global__ void sum_edge_forces_torques(c_number4 __restrict__ *edge_forces, c_number4 __restrict__ *forces, c_number4 __restrict__ *edge_torques,
-		c_number4 __restrict__ *torques, int N, int n_forces) {
+__global__ void sum_edge_forces_torques(c_number4 *edge_forces, c_number4 *forces, c_number4 *edge_torques,
+		c_number4 *torques, int N, int n_forces) {
 	if(IND >= N) return;
 
 	c_number4 tot_force = forces[IND];
@@ -35,7 +35,7 @@ __global__ void sum_edge_forces_torques(c_number4 __restrict__ *edge_forces, c_n
 	torques[IND] = tot_torque;
 }
 
-__global__ void sum_edge_forces(c_number4 __restrict__ *edge_forces, c_number4 __restrict__ *forces, int N, int n_forces) {
+__global__ void sum_edge_forces(c_number4 *edge_forces, c_number4 *forces, int N, int n_forces) {
 	if(IND >= N) return;
 
 	c_number4 tot_force = forces[IND];

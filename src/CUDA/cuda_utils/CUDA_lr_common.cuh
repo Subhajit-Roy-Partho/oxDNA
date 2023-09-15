@@ -11,6 +11,7 @@
 #define CUDA_LR_COMMON
 
 #include "../CUDAUtils.h"
+// #include "../../win/mathdef.h"
 
 #include <curand_kernel.h>
 

@@ -116,7 +116,7 @@ ENDIF()
 
 include_directories(src/extern)
 
-ADD_DEFINITIONS(-Wall -Wshadow -Wextra -Wno-unused-parameter)
+# ADD_DEFINITIONS(/W4 -Wno-dev)'/
 
 IF(NOT Debug)
 	IF(INTEL)

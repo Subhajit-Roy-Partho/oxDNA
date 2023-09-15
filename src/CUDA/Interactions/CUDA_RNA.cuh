@@ -966,8 +966,8 @@ void _particle_particle_RNA_interaction(const c_number4 &r, const c_number4 &ppo
 	T.w = tot_Tw;
 }
 
-__global__ void rna_forces_edge_nonbonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations,
-		c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const edge_bond __restrict__ *edge_list,
+__global__ void rna_forces_edge_nonbonded(const c_number4  *poss, const GPU_quat  *orientations,
+		c_number4  *forces, c_number4  *torques, const edge_bond  *edge_list,
 		int n_edges, const int *is_strand_end, bool average, bool use_debye_huckel, bool mismatch_repulsion, CUDABox *box) {
 	if(IND >= n_edges) return;
 
@@ -1011,8 +1011,8 @@ __global__ void rna_forces_edge_nonbonded(const c_number4 __restrict__ *poss, co
 }
 
 // bonded interactions for edge-based approach
-__global__ void rna_forces_edge_bonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations,
-		c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const LR_bonds __restrict__ *bonds, bool average,
+__global__ void rna_forces_edge_bonded(const c_number4  *poss, const GPU_quat  *orientations,
+		c_number4  *forces, c_number4  *torques, const LR_bonds  *bonds, bool average,
 		bool use_mbf, c_number mbf_xmax, c_number mbf_finf) {
 	if(IND >= MD_N[0]) return;
 
@@ -1046,8 +1046,8 @@ __global__ void rna_forces_edge_bonded(const c_number4 __restrict__ *poss, const
 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, dT + T0);
 }
 
-__global__ void rna_forces(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-		c_number4 __restrict__ *torques, const int *matrix_neighs, const int *number_neighs, const LR_bonds __restrict__ *bonds, bool average,
+__global__ void rna_forces(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+		c_number4  *torques, const int *matrix_neighs, const int *number_neighs, const LR_bonds  *bonds, bool average,
 		bool use_debye_huckel, bool mismatch_repulsion, bool use_mbf, c_number mbf_xmax, c_number mbf_finf, CUDABox *box) {
 	if(IND >= MD_N[0]) return;
 
@@ -1274,7 +1274,7 @@ __global__ void rna_dist_op_precalc(c_number4 *poss, GPU_quat *orientations, int
 	op_dists[IND] = _module(rbase);
 }
 
-__global__ void init_RNA_strand_ends(int *is_strand_end, const LR_bonds __restrict__ *bonds, int N) {
+__global__ void init_RNA_strand_ends(int *is_strand_end, const LR_bonds  *bonds, int N) {
 	if(IND >= N) return;
 
 	LR_bonds pbonds = bonds[IND];

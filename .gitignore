@@ -75,3 +75,8 @@ MANIFEST
 .DS_Store
 
 select_compute_arch_laptop.cmake
+
+#Windows ignore
+.vs
+.settings
+.github

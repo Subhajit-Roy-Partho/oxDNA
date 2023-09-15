@@ -724,8 +724,8 @@ __device__ void _dna_particle_particle_DNA_interaction(const c_number4 &r, const
     T.w = tot_Tw;
 }
 
-//__global__ void dna_forces_edge_nonbonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-//                                          c_number4 __restrict__ *torques, const edge_bond __restrict__ *edge_list, int n_edges, const int *is_strand_end, bool grooving,
+//__global__ void dna_forces_edge_nonbonded(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+//                                          c_number4  *torques, const edge_bond  *edge_list, int n_edges, const int *is_strand_end, bool grooving,
 //                                          bool use_debye_huckel, bool use_oxDNA2_coaxial_stacking, bool update_st, CUDAStressTensor *st, const CUDABox *box) {
 //    if(IND >= n_edges) return;
 //
@@ -776,8 +776,8 @@ __device__ void _dna_particle_particle_DNA_interaction(const c_number4 &r, const
 //}
 //
 //// bonded interactions for edge-based approach
-//__global__ void dna_forces_edge_bonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-//                                       c_number4 __restrict__ *torques, const LR_bonds __restrict__ *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
+//__global__ void dna_forces_edge_bonded(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+//                                       c_number4  *torques, const LR_bonds  *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
 //                                       c_number mbf_finf, bool update_st, CUDAStressTensor *st) {
 //    if(IND >= MD_N[0]) return;
 //
@@ -829,8 +829,8 @@ __device__ void _dna_particle_particle_DNA_interaction(const c_number4 &r, const
 //    }
 //}
 //
-//__global__ void dna_forces(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-//                           c_number4 __restrict__ *torques, const int *matrix_neighs,	const int *number_neighs, const LR_bonds __restrict__ *bonds,
+//__global__ void dna_forces(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+//                           c_number4  *torques, const int *matrix_neighs,	const int *number_neighs, const LR_bonds  *bonds,
 //                           bool grooving, bool use_debye_huckel, bool use_oxDNA2_coaxial_stacking, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
 //                           c_number mbf_finf, bool update_st, CUDAStressTensor *st, const CUDABox *box) {
 //    if(IND >= MD_N[0]) return;
@@ -1070,7 +1070,7 @@ __global__ void dna_dist_op_precalc(c_number4 *poss, GPU_quat *orientations, int
     op_dists[IND] = _module(rbase);
 }
 
-__global__ void dna_init_DNA_strand_ends(int *is_strand_end, const LR_bonds __restrict__ *bonds, int N) {
+__global__ void dna_init_DNA_strand_ends(int *is_strand_end, const LR_bonds  *bonds, int N) {
     if(IND >= N) return;
 
     LR_bonds pbonds = bonds[IND];
@@ -1379,8 +1379,8 @@ __forceinline__ __device__ void excluded_volume_quart_ang(const c_number4 &r, c_
 //    }
 //}
 
-__global__ void dnanm_forces_edge_nonbonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-                                            c_number4 __restrict__ *torques, const edge_bond __restrict__ *edge_list, int n_edges, const int *is_strand_end, bool grooving,
+__global__ void dnanm_forces_edge_nonbonded(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+                                            c_number4  *torques, const edge_bond  *edge_list, int n_edges, const int *is_strand_end, bool grooving,
                                             bool use_debye_huckel, bool use_oxDNA2_coaxial_stacking, bool update_st, CUDAStressTensor *st, const CUDABox *box) {
     if (IND >= n_edges) return;
 
@@ -1746,8 +1746,8 @@ __global__ void dnanm_forces_edge_nonbonded(const c_number4 __restrict__ *poss, 
 //
 //
 //
-__global__ void protein_forces_edge_bonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-                                       c_number4 __restrict__ *torques, const LR_bonds __restrict__ *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
+__global__ void protein_forces_edge_bonded(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+                                       c_number4  *torques, const LR_bonds  *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
                                        c_number mbf_finf, CUDABox *box, bool update_st, CUDAStressTensor *st, c_number *_d_aff_eqdist, c_number *_d_aff_gamma, int *_d_affected_indx, int *_d_affected) {
     if(IND >= MD_N[0]) return;
     if(IND < _offset) return;
@@ -1791,8 +1791,8 @@ __global__ void protein_forces_edge_bonded(const c_number4 __restrict__ *poss, c
     }
 }
 //
-__global__ void dna_forces_edge_bonded_dnanm(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces,
-                                       c_number4 __restrict__ *torques, const LR_bonds __restrict__ *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
+__global__ void dna_forces_edge_bonded_dnanm(const c_number4  *poss, const GPU_quat  *orientations, c_number4  *forces,
+                                       c_number4  *torques, const LR_bonds  *bonds, bool grooving, bool use_oxDNA2_FENE, bool use_mbf, c_number mbf_xmax,
                                        c_number mbf_finf, bool update_st, CUDAStressTensor *st){
     if(IND >= MD_N[0]) return;
     if(IND >= _offset && IND < _offset+_npro) return;
