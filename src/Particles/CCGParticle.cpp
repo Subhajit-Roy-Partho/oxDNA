@@ -1,5 +1,6 @@
 //CCGParticle.cpp
 // Subhajit
+// Major breaking changes k = Bfactor;
 
 #include "CCGParticle.h"
 
@@ -57,7 +58,7 @@ void CCGParticle::return_kro(int particleIndex,double *k,double *r0){
     std::vector<int>::iterator itr = std::find(spring_neighbours.begin(), spring_neighbours.end(), particleIndex);
     if(itr!=spring_neighbours.cend()){
         int jindex = (int)std::distance(spring_neighbours.begin(),itr);
-        *k = (double)1.0/Bfactor[jindex];
+        *k = (double)Bfactor[jindex];
         *r0 = (double)ro[jindex];
         // std::cout<<index<<"\t"<<particleIndex<<"\t"<<*k<<"\t"<<*r0<<"\n";
     }else{
