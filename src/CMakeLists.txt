@@ -165,8 +165,8 @@ SET(forces_SOURCES
 	Forces/MovingTrap.cpp
 	Forces/LowdimMovingTrap.cpp
 	Forces/MutualTrap.cpp
-	# Forces/SkewTrap.cpp
-	# Forces/Morse.cpp
+	Forces/SkewTrap.cpp
+	Forces/Morse.cpp
 	Forces/RepulsiveEllipsoid.cpp
 	Forces/RepulsionPlane.cpp
 	Forces/RepulsionPlaneMoving.cpp
@@ -302,7 +302,7 @@ IF(CUDA)
 		CUDA/Interactions/CUDABaseInteraction.cu
 		CUDA/Interactions/CUDADNAInteraction.cu
 		CUDA/Interactions/CUDACCGInteraction.cu
-		# CUDA/Interactions/CUDADNANMInteraction.cu
+		CUDA/Interactions/CUDADNANMInteraction.cu
 		# CUDA/Interactions/CUDACGDNAInteraction.cu
 		CUDA/Interactions/CUDALJInteraction.cu
 		CUDA/Interactions/CUDARNAInteraction.cu

@@ -41,7 +41,7 @@ number KineticEnergy::get_kinetic_energy() {
 		if(p->is_rigid_body()) K += p->L.norm() * (number) 0.5f;
 
 		for(auto dir: _directions) {
-			K += SQR(p->vel[dir]) * factor;
+			K += SQR(p->vel[dir]) * factor;// subho *p->mass
 		}
 	}
 	K /= _config_info->N();

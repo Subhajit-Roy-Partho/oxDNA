@@ -16,7 +16,7 @@
 #include "CUDAPatchyInteraction.h"
 #include "CUDATEPInteraction.h"
 #include "CUDARNAInteraction.h"
-// #include "CUDADNANMInteraction.h"
+#include "CUDADNANMInteraction.h"
 // #include "CUDACCGInteraction.h"
 
 #include "../../Utilities/Utils.h"
@@ -39,8 +39,8 @@ std::shared_ptr<CUDABaseInteraction> CUDAInteractionFactory::make_interaction(in
 	else if(!inter_type.compare("LJ")) return std::make_shared<CUDALJInteraction>();
 	else if(!inter_type.compare("patchy")) return std::make_shared<CUDAPatchyInteraction>();
 	else if(inter_type.compare("TEP") == 0) return std::make_shared<CUDATEPInteraction>();
-	// else if(inter_type.compare("DNANM") == 0) return std::make_shared<CUDADNANMInteraction>(false);
-    // else if(inter_type.compare("DNACT") == 0) return std::make_shared<CUDADNANMInteraction>(true);
+	else if(inter_type.compare("DNANM") == 0) return std::make_shared<CUDADNANMInteraction>(false);
+	else if(inter_type.compare("DNACT") == 0) return std::make_shared<CUDADNANMInteraction>(true);
 	// else if(!inter_type.compare("CCG")) return std::make_shared<CUDACCGInteraction>();
 	else {
 		std::string cuda_name(inter_type);
