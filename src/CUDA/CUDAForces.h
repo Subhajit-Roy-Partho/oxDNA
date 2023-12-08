@@ -24,6 +24,8 @@
 #include "../Forces/LJCone.h"
 #include "../Forces/RepulsiveEllipsoid.h"
 #include "../Forces/Metadynamics/LTCOMTrap.h"
+#include "../Forces/SkewTrap.h"
+#include "../Forces/Morse.h"
 
 #include "CUDAUtils.h"
 
@@ -43,6 +45,8 @@
 #define CUDA_REPULSIVE_ELLIPSOID 12
 #define CUDA_COM_FORCE 13
 #define CUDA_LR_COM_TRAP 14
+#define CUDA_TRAP_SKEW 15
+#define CUDA_MORSE 16
 
 /**
  * @brief CUDA version of a ConstantRateForce.

@@ -15,6 +15,8 @@
 #include "LowdimMovingTrap.h"
 #include "MovingTrap.h"
 #include "MutualTrap.h"
+// #include "SkewTrap.h"
+// #include "Morse.h"
 #include "RepulsionPlane.h"
 #include "RepulsionPlaneMoving.h"
 #include "LJWall.h"

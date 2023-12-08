@@ -23,7 +23,7 @@ __device__ GPU_quat _get_updated_orientation(c_number4 &L, GPU_quat &old_o) {
 	return quat_multiply(old_o, R);
 }
 
-__global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) {
+__global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) { //subho c_number *massesInv
 	if(IND >= MD_N[0]) return;
 
 	const c_number4 F = forces[IND];
@@ -31,9 +31,9 @@ __global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *l
 	c_number4 r = poss[IND];
 	c_number4 v = vels[IND];
 
-	v.x += F.x * (MD_dt[0] * (c_number) 0.5f);
-	v.y += F.y * (MD_dt[0] * (c_number) 0.5f);
-	v.z += F.z * (MD_dt[0] * (c_number) 0.5f);
+	v.x += F.x * (MD_dt[0] * (c_number) 0.5f); //subho * massesInv[IND]
+	v.y += F.y * (MD_dt[0] * (c_number) 0.5f); //subho * massesInv[IND]
+	v.z += F.z * (MD_dt[0] * (c_number) 0.5f); //subho * massesInv[IND]
 
 	r.x += v.x * MD_dt[0];
 	r.y += v.y * MD_dt[0];
@@ -134,13 +134,59 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				c_number4 dr = (extF.mutual.PBC) ? box->minimum_image(ppos, qpos) : qpos - ppos;
 				c_number dr_abs = _module(dr);
 
-				c_number4 force = dr * ((dr_abs - (extF.mutual.r0 + extF.mutual.rate * step)) * (extF.mutual.stiff + (step * extF.mutual.stiff_rate)) / dr_abs);
+				c_number4 force = dr * ((dr_abs - (extF.mutual.r0 + extF.mutual.rate * step)) * (extF.mutual.stiff + (step * extF.mutual.stiff_rate)) / dr_abs); //subho this is very different
 
 				F.x += force.x;
 				F.y += force.y;
 				F.z += force.z;
 				break;
 			}
+//             case CUDA_MORSE: {
+//                 c_number4 qpos = poss[extF.morse.p_ind];
+
+//                 c_number4 dr = (extF.morse.PBC) ? box->minimum_image(ppos, qpos) : qpos - ppos;
+//                 c_number dr_abs = _module(dr);
+
+//                 c_number4 force = (dr / dr_abs)*2*extF.morse.a*extF.morse.D*exp(-extF.morse.a*dr_abs)*(1- exp(-extF.morse.a*dr_abs));
+
+//                 F.x += force.x;
+//                 F.y += force.y;
+//                 F.z += force.z;
+//                 break;
+//             }
+//             case CUDA_TRAP_SKEW: {
+//                 c_number4 qpos = poss[extF.skew.p_ind];
+
+//                 c_number4 dr = (extF.skew.PBC) ? box->minimum_image(ppos, qpos) : qpos - ppos;
+//                 c_number dr_abs = _module(dr);
+
+//                 c_number dx = (dr_abs - (extF.skew.r0 + extF.skew.rate * step));
+//                 c_number mag;
+//                 // logic seems sound enough
+//                 bool sign = (dx > 0 == extF.skew.ddx > 0);
+//                 bool dist = abs(dx) >= abs(extF.skew.ddx);
+// //                printf("dx %.4f sign %d dist %d \n", dx, sign, dist);
+//                 if(sign && dist){ //same sign and past discontinuity point
+//                     // Lin F
+//                     // mag = -extF.skew.slope * dx - extF.skew.intercept;
+
+//                     // Hep F
+//                     mag = -8.f * extF.skew.slope * pow(dx, 7) - extF.skew.intercept;
+//                     printf("fit dx %.4f skew mag %.4f sign %d dist %d\n", dx, mag, sign, dist);
+//                 } else {
+//                     mag = (-dx + ((extF.skew.a*exp(pow(dx, 2) * extF.skew.val1) *  // _val1 = (-a^2/(2s^2)) val3 = a/ (s*sqrt(2)) _val2 = Sqrt(2 Pi)*s
+//                                    extF.skew.val2) / (1 + erf(extF.skew.val3*dx)))) * extF.skew.val4;
+// //                    printf("og dx %.4f skew mag %.4f sign %d dist %d\n", dx, mag, sign, dist);
+//                 }
+// //                printf("dx %.4f skew mag %.4f \n", dx, mag);
+
+//                 c_number4 force = -dr / dr_abs * mag ;
+
+//                 F.x += force.x;
+//                 F.y += force.y;
+//                 F.z += force.z;
+//                 break;
+//             }
 			case CUDA_TRAP_MOVING: {
 				c_number tx = extF.moving.pos0.x + extF.moving.rate * step * extF.moving.dir.x;
 				c_number ty = extF.moving.pos0.y + extF.moving.rate * step * extF.moving.dir.y;
