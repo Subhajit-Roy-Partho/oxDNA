@@ -38,10 +38,10 @@ number KineticEnergy::get_kinetic_energy() {
 	number factor = 1.5 / _directions.size();
 	number K = 0.f;
 	for(auto p: _config_info->particles()) {
-		if(p->is_rigid_body()) K += p->L.norm() * (number) 0.5f*p->mr2; //subho
+		if(p->is_rigid_body()) K += p->L.norm() * (number) 0.5f; //subho
 
 		for(auto dir: _directions) {
-			K += SQR(p->vel[dir]) * factor*p->mass; //subho
+			K += SQR(p->vel[dir]) * factor; //subho
 		}
 	}
 	K /= _config_info->N();
