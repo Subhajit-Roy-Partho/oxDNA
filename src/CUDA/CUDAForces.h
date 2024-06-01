@@ -24,6 +24,7 @@
 #include "../Forces/GenericCentralForce.h"
 #include "../Forces/LJCone.h"
 #include "../Forces/RepulsiveEllipsoid.h"
+
 #include "../Forces/YukawaSphere.h"
 #include "../Forces/Metadynamics/LTCOMTrap.h"
 #include "../Forces/AttractionPlane.h"
@@ -495,6 +496,7 @@ union CUDA_trap {
 	COM_force comforce;
 	lt_com_trap ltcomtrap;
 	Yukawa_sphere yukawasphere;
+	attraction_plane attractionplane;
 };
 
 #endif /* CUDAFORCES_H_ */

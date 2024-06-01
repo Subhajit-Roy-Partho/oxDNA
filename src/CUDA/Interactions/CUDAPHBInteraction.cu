@@ -277,13 +277,6 @@ __device__ void CUDApatchySimple(c_number4 &r, c_number4 &a1, c_number4 &a2, c_n
     }
 }
 
-
-__device__ bool GPUbondingAllowed(int &pindex,int &qindex, int &pi, int &qi){
-    // if(topology[pindex][0] == topology[qindex][0]) return false; // check if they are in the same strand
-    return false;
-
-}
-
 ///////////////////Helix Interaction /////////////////////////
 
 // __device__ void CUDAbondedTwist(c_number4 &fp, c_number4 &fq, c_number4 &vp, c_number4 &vq, c_number4 &up, c_number4 &uq)
