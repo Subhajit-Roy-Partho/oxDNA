@@ -71,8 +71,8 @@ void PHBInteraction::init(){
 	// cout<<"INIT is called"<<endl;
 	number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
     patchEcut = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
-	_rcut=20;
-	_sqr_rcut=sqrt(_rcut);
+	// _rcut=20;
+	// _sqr_rcut=sqrt(_rcut);
 };
 void PHBInteraction::allocate_particles(std::vector<BaseParticle *> &particles){
 	particles.resize(totPar);
@@ -98,11 +98,11 @@ number PHBInteraction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q,
 	auto *qCG = static_cast<PHBParticle*>(q);
 	// std::cout<< "this is called "<< std::endl;
 	// if(pCG->has_bond(q)){
-		energy += spring(pCG,qCG,compute_r,update_forces);
-		// energy += bonded_twist(pCG, qCG, false, update_forces);
-		// energy += falseTwist(pCG, qCG, false, update_forces);
-		energy += bonded_double_bending(pCG, qCG, false, update_forces);
-		energy += bonded_alignment(pCG, qCG, false, update_forces);
+		// energy += spring(pCG,qCG,compute_r,update_forces);
+		// // energy += bonded_twist(pCG, qCG, false, update_forces);
+		// // energy += falseTwist(pCG, qCG, false, update_forces);
+		// energy += bonded_double_bending(pCG, qCG, false, update_forces);
+		// energy += bonded_alignment(pCG, qCG, false, update_forces);
 	// }
 	return energy;
 };
@@ -113,8 +113,8 @@ number PHBInteraction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle 
 	// cout<< "this is called "<< std::endl;
 	if(!pCG->has_bond(q)){
 		// cout<<"Radius : " << pCG->radius << " " << qCG->radius << endl;
-		energy+=exc_vol_nonbonded(p,q,compute_r,update_forces);
-		energy+=patchy_interaction_notorsion(pCG,qCG,compute_r,update_forces);
+		// energy+=exc_vol_nonbonded(p,q,compute_r,update_forces);
+		// energy+=patchy_interaction_notorsion(pCG,qCG,compute_r,update_forces);
 	}
 	return energy;
 };

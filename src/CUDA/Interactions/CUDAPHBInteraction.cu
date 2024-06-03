@@ -34,86 +34,6 @@ __constant__ float tk=1.14813301;
 __constant__ float kb1=1;
 __constant__ float kb2=0.80;
 
-CUDAPHBInteraction::CUDAPHBInteraction()
-{
-    _edge_compatible = true;
-}
-
-CUDAPHBInteraction::~CUDAPHBInteraction()
-{
-}
-
-void CUDAPHBInteraction::get_settings(input_file &inp)
-{
-    PHBInteraction::get_settings(inp);
-}
-
-void CUDAPHBInteraction::cuda_init(int N)
-{
-    CUDABaseInteraction::cuda_init(N);
-    PHBInteraction::init();
-    std::vector<BaseParticle *> particles(N);
-	int my_N_strands;
-	PHBInteraction::read_topology(&my_N_strands, particles);
-    std::cout<<this->_rcut<<std::endl;
-    std::cout<<this->_sqr_rcut<<std::endl;
-
-    number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
-    number GPUhardVolCutoff = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
-
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(rcut2, &_sqr_rcut, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(sigma, &patchySigma, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rc, &patchyRc, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyRcutSqr, &patchyCutOff2, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(powAlpha, &patchyPowAlpha, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyEps, &patchyEpsilon, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(hardVolCutoff, &GPUhardVolCutoff, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(n_forces, &_n_forces, sizeof(int)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patches, &GPUpatches, sizeof(float) * GPUmaxiP * 5));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(numPatches, &MD_NumPatches, sizeof(int) * GPUmaxiC * MaxPatches));
-
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(connection, &GPUconnections, sizeof(int) * MAXparticles * (MAXneighbour + 1)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(ro, &GPUro, sizeof(float) * MAXparticles * MAXneighbour));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(k, &GPUk, sizeof(float) * MAXparticles * MAXneighbour));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(strand, &GPUstrand, sizeof(int) * MAXparticles));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(iC, &GPUiC, sizeof(int) * MAXparticles));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(radius, &GPUradius, sizeof(float) * MAXparticles));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(mass, &GPUmass, sizeof(float) * MAXparticles));
-
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(ka, &_ka, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kb, &_kb, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kt, &_kt, sizeof(float)));
-
-    // std::cout<<"CUDA Connection Info"<<std::endl;
-    // for(int i=0;i<7;i++){
-    //     for(int j=0;j<GPUconnections[i][0];j++){
-    //         std::cout<<GPUconnections[i][j+1]<<"\t";
-    //         std::cout<<GPUro[i][j]<<"\t";
-    //         std::cout<<GPUk[i][j]<<"\t";
-    //     }
-    //     std::cout<<"\n";
-    // }
-
-    // std::cout<<"CUDA patch Info"<<std::endl;
-    // for(int i=0;i<GPUmaxiP;i++){
-    //     for(int j=0;j<5;j++){
-    //         std::cout<<GPUpatches[i][j]<<"\t";
-    //     }
-    //     std::cout<<"\n";
-    // }
-
-    // std::cout<<"CUDA particle color Information"<<std::endl;
-    // for(int i=0;i<GPUmaxiC;i++){
-    //     for(int j=0;j<GPUnumPatches[i][0];j++){
-    //         std::cout<<GPUnumPatches[i][j+1]<<"\t";
-    //     }
-    //     std::cout<<"\n";
-    // }
-    std::cout<<patchyPowAlpha<<std::endl;
-}
 
 __device__ void rotateVectorAroundVector(c_number4 &v, c_number4 &axis, c_number angle)
 {
@@ -339,13 +259,14 @@ __device__ void bondedInteraction(c_number4 &poss ,c_number4 &a1, c_number4 &a2,
     c_number rmod = sqrt(CUDA_DOT(r, r));
     
     CUDAspring(r,ro,k,F,rmod);
-    CUDAbondedDoubleBending(a1,b1,F,T);
-
-    if(qid-pid==1){
-        CUDAbondedAlignment(r,a1,F,T,rmod,false);
-    }else if(pid-qid==1){
-        CUDAbondedAlignment(r,b1,F,T,rmod,true);
-    }
+    // printf("Mag of force = %d\n",F.w);
+    printf("Radius = %d, ro = %d, k= %d\n",r,ro,k);
+    // CUDAbondedDoubleBending(a1,b1,F,T);
+    // if(qid-pid==1){
+    //     CUDAbondedAlignment(r,a1,F,T,rmod,false);
+    // }else if(pid-qid==1){
+    //     CUDAbondedAlignment(r,b1,F,T,rmod,true);
+    // }
 }
 
 __device__ void nonbondedInteraction(c_number4 &ppos ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qpos, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box,c_number totRad,int pi,int pj){
@@ -359,6 +280,8 @@ __device__ void nonbondedInteraction(c_number4 &ppos ,c_number4 &a1, c_number4 &
 
 /////////////// Main Particle Interaction //////////////////////
 __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
+    // printf("IND = %d\n",IND);
+    // printf("Initial force value F.w = %f\n",forces[IND].w);
     if(IND >= MD_N[0]) return; // for i > N leave
 
     // c_number4 F = make_c_number4(0, 0, 0, 0);
@@ -371,12 +294,12 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
 	get_vectors_from_quat(orientations[IND], a1, a2, a3);
 
     //Bonded Interactions
-    for(int p =0;p<connection[IND][0];p++){
-        int id = connection[IND][p+1];
-        c_number4 b1, b2, b3;
-        get_vectors_from_quat(orientations[id], b1, b2, b3);
-        bondedInteraction(ppos,a1,a2,a3,poss[id],b1,b2,b3,F,T,box,IND,id,ro[IND][p],k[IND][p]);
-    }
+    // for(int p =0;p<connection[IND][0];p++){
+    //     int id = connection[IND][p+1];
+    //     c_number4 b1, b2, b3;
+    //     get_vectors_from_quat(orientations[id], b1, b2, b3);
+    //     bondedInteraction(ppos,a1,a2,a3,poss[id],b1,b2,b3,F,T,box,IND,id,ro[IND][p],k[IND][p]);
+    // }
 
 
     // Non bonded interactions
@@ -384,7 +307,8 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
     for(int j = 0; j < num_neighs; j++) {
 		int k_index = NEXT_NEIGHBOUR(IND, j, matrix_neighs);
 
-        if(k_index != IND ) {
+        if(k_index != IND && strand[IND]!=strand[k_index]) {
+            printf("For index = %i, kIndex = %i\n",IND,k_index);
 			c_number4 qpos = poss[k_index];
             c_number4 b1, b2, b3;
             get_vectors_from_quat(orientations[k_index], b1, b2, b3);
@@ -396,6 +320,83 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
     F.w *= (c_number) 0.5f;
     forces[IND] = F;
 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
+}
+
+CUDAPHBInteraction::CUDAPHBInteraction():PHBInteraction(){}
+CUDAPHBInteraction::~CUDAPHBInteraction(){}
+void CUDAPHBInteraction::get_settings(input_file &inp){
+    PHBInteraction::get_settings(inp);
+}
+void CUDAPHBInteraction::cuda_init(int N){
+    CUDABaseInteraction::cuda_init(N);
+    PHBInteraction::init();
+    // std::cout<<"N = "<<N<<std::endl;
+    std::vector<BaseParticle *> particles(N);
+    PHBInteraction::allocate_particles(particles);
+	int my_N_strands;
+	PHBInteraction::read_topology(&my_N_strands, particles);
+    // std::cout<<this->_rcut<<std::endl;
+    // std::cout<<this->_sqr_rcut<<std::endl;
+
+    for(int i = 0; i < N; i++) {
+		delete particles[i];
+	}
+
+    number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
+    number GPUhardVolCutoff = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
+
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(rcut2, &_sqr_rcut, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(sigma, &patchySigma, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rc, &patchyRc, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyRcutSqr, &patchyCutOff2, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(powAlpha, &patchyPowAlpha, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyEps, &patchyEpsilon, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(hardVolCutoff, &GPUhardVolCutoff, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(n_forces, &_n_forces, sizeof(int)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patches, &GPUpatches, sizeof(float) * GPUmaxiP * 5));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(numPatches, &MD_NumPatches, sizeof(int) * GPUmaxiC * MaxPatches));
+
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(connection, &GPUconnections, sizeof(int) * MAXparticles * (MAXneighbour + 1)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(ro, &GPUro, sizeof(float) * MAXparticles * MAXneighbour));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(k, &GPUk, sizeof(float) * MAXparticles * MAXneighbour));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(strand, &GPUstrand, sizeof(int) * MAXparticles));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(iC, &GPUiC, sizeof(int) * MAXparticles));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(radius, &GPUradius, sizeof(float) * MAXparticles));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(mass, &GPUmass, sizeof(float) * MAXparticles));
+
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(ka, &_ka, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kb, &_kb, sizeof(float)));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kt, &_kt, sizeof(float)));
+
+    // std::cout<<"CUDA Connection Info"<<std::endl;
+    // for(int i=0;i<7;i++){
+    //     for(int j=0;j<GPUconnections[i][0];j++){
+    //         std::cout<<GPUconnections[i][j+1]<<"\t";
+    //         std::cout<<GPUro[i][j]<<"\t";
+    //         std::cout<<GPUk[i][j]<<"\t";
+    //     }
+    //     std::cout<<"\n";
+    // }
+
+    // std::cout<<"CUDA patch Info"<<std::endl;
+    // for(int i=0;i<GPUmaxiP;i++){
+    //     for(int j=0;j<5;j++){
+    //         std::cout<<GPUpatches[i][j]<<"\t";
+    //     }
+    //     std::cout<<"\n";
+    // }
+
+    // std::cout<<"CUDA particle color Information"<<std::endl;
+    // for(int i=0;i<GPUmaxiC;i++){
+    //     for(int j=0;j<GPUnumPatches[i][0];j++){
+    //         std::cout<<GPUnumPatches[i][j+1]<<"\t";
+    //     }
+    //     std::cout<<"\n";
+    // }
+    // std::cout<<patchyPowAlpha<<std::endl;
 }
 
 void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, GPU_quat *d_orientations, c_number4 *d_forces, c_number4 *d_torques, LR_bonds *d_bonds, CUDABox *d_box)
@@ -416,8 +417,15 @@ void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, 
     // CUDAbondedParticles<<<(lists->N_edges - 1)/(_launch_cfg.threads_per_block) + 1, _launch_cfg.threads_per_block>>>
     // (d_poss, d_orientations, d_forces, d_torques, _update_st, _d_st);
     // Partiles disctributes in the grid
+
+
     CUDAparticle <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>> 
     (d_poss, d_orientations, d_forces,  d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
+
+    // cudaDeviceProp deviceProp;
+    // cudaGetDeviceProperties(&deviceProp, 0);
+    // printf("Device %d has compute capability %d.%d.\n",
+    // 0, deviceProp.major, deviceProp.minor);
 
     CUT_CHECK_ERROR("Kernel failed, something quite exciting");
 }
