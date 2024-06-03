@@ -73,3 +73,8 @@ MANIFEST
 .DS_Store
 
 select_compute_arch_laptop.cmake
+
+*.mgl
+*.log
+trajectory.dat
+*.ign

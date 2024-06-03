@@ -97,13 +97,13 @@ number PHBInteraction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q,
 	auto *pCG = dynamic_cast<PHBParticle*>(p);
 	auto *qCG = static_cast<PHBParticle*>(q);
 	// std::cout<< "this is called "<< std::endl;
-	// if(pCG->has_bond(q)){
-		// energy += spring(pCG,qCG,compute_r,update_forces);
+	if(pCG->has_bond(q)){
+		energy += spring(pCG,qCG,compute_r,update_forces);
 		// // energy += bonded_twist(pCG, qCG, false, update_forces);
 		// // energy += falseTwist(pCG, qCG, false, update_forces);
 		// energy += bonded_double_bending(pCG, qCG, false, update_forces);
 		// energy += bonded_alignment(pCG, qCG, false, update_forces);
-	// }
+	}
 	return energy;
 };
 number PHBInteraction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces){

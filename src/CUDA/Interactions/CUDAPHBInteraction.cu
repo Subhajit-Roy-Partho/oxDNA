@@ -53,10 +53,10 @@ __device__ void rotateVectorAroundVector(c_number4 &v, c_number4 &axis, c_number
 
 ////////////////////bonded Interactions //////////////////////
 
-__device__ void CUDAspring(c_number4 &r, c_number &r0, c_number &k, c_number4 &F, c_number &rmod)
+__device__ void CUDAspring(c_number4 &r, c_number r0, c_number k, c_number4 &F, c_number &rmod)
 {
-    c_number dist = abs(rmod - r0);
-    F.w -= 0.5f * k * dist * dist;
+    c_number dist = rmod - r0;
+    F.w += 0.25f * k * dist * dist;
     c_number magForce = (k * dist) / rmod;
     F.x += r.x * magForce;
     F.y += r.y * magForce;
@@ -66,6 +66,30 @@ __device__ void CUDAspring(c_number4 &r, c_number &r0, c_number &k, c_number4 &F
 ///////////////////nonbonded Interactions ////////////////////
 
 ///////////////////Voulume Exclusion /////////////////////////
+
+__device__ void CUDArepulsive_lj2(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc) {
+	c_number rnorm = CUDA_DOT(r, r);
+	if(rnorm < SQR(rc)) {
+		if(rnorm > SQR(rstar)) {
+			c_number rmod = sqrtf(rnorm);
+			c_number rrc = rmod - rc;
+			c_number part = prefactor * b * rrc;
+			F.x += r.x * (2.f * part / rmod);
+			F.y += r.y * (2.f * part / rmod);
+			F.z += r.z * (2.f * part / rmod);
+			F.w += part * rrc;
+		}
+		else {
+			c_number tmp = SQR(sigma) / rnorm;
+			c_number lj_part = tmp * tmp * tmp;
+			// the additive term was added by me to mimick Davide's implementation
+			F.x += r.x * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+			F.y += r.y * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+			F.z += r.z * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+			F.w += 4.f * prefactor * (SQR(lj_part) - lj_part) + prefactor;
+		}
+	}
+}
 
 __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc,c_number r2)
 {
@@ -204,22 +228,22 @@ __device__ void CUDApatchySimple(c_number4 &r, c_number4 &a1, c_number4 &a2, c_n
 //     c_number cos_alpha_plus_gamma = CUDA_DOT(fp, fq) + CUDA_DOT(vp, vq) / 1 + CUDA_DOT(up, uq);
 // };
 
-__device__ void CUDAbondedAlignment(c_number4 &tp, c_number4 &up,c_number4 &F, c_number4 &T,c_number &rmod,bool straight){
-    int factor=1;
-    if(!straight){ tp = -tp; factor=-1;}; // factor make sure that the force is negative if the alignment is not opposite
-    c_number4 force = factor*ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
-    F.x += force.x;
-    F.y += force.y;
-    F.z += force.z;
-    F.w += ka*(1-CUDA_DOT(up,tp)/rmod);
-    c_number4 torque = -(ka*_cross(tp,up))/rmod;
-    T.x += torque.x;
-    T.y += torque.y;
-    T.z += torque.z;
-}
+// __device__ void CUDAbondedAlignment(c_number4 &tp, c_number4 &up,c_number4 &F, c_number4 &T,c_number &rmod,bool straight){
+//     int factor=1;
+//     if(!straight){ tp = -tp; factor=-1;}; // factor make sure that the force is negative if the alignment is not opposite
+//     c_number4 force = factor*ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
+//     F.x += force.x;
+//     F.y += force.y;
+//     F.z += force.z;
+//     F.w += ka*(1-CUDA_DOT(up,tp)/rmod);
+//     c_number4 torque = -(ka*_cross(tp,up))/rmod;
+//     T.x += torque.x;
+//     T.y += torque.y;
+//     T.z += torque.z;
+// }
 
 __device__ void CUDAbondedDoubleBending(c_number4 &up, c_number4 &uq,c_number4 &F, c_number4 &T){
-    // c_number4 torque;
+    c_number4 torque;
 
     c_number cosine = CUDA_DOT(up,uq);
     c_number gu = cosf(tu);
@@ -234,10 +258,12 @@ __device__ void CUDAbondedDoubleBending(c_number4 &up, c_number4 &uq,c_number4 &
 	c_number g_ = A * SQR(angle) / 2.f + angle * (B - tu * A);
 	c_number g = g_ + C;
 
+    // unkinked bending regime
     if(angle < tu){
-        T += kb * kb1 * _cross(up, uq);
+        torque = kb * kb1 * _cross(up, uq);
 		F.w += kb * (1.f - cosine) * kb1;
     }
+    // intermediate regime
     else if(angle < tk) {
 		c_number4 sin_vector = _cross(up, uq);
 		c_number sin_module = _module(sin_vector);
@@ -245,13 +271,17 @@ __device__ void CUDAbondedDoubleBending(c_number4 &up, c_number4 &uq,c_number4 &
 		sin_vector.y /= sin_module;
 		sin_vector.z /= sin_module;
 
-		T+= kb * g1 * sin_vector;
+		torque = kb * g1 * sin_vector;
 		F.w += kb * g;
 	}
+    // kinked bending regime - same as unkinked, but with an additive term to the energy and with a different bending.
     else {
-		T+= kb * kb2 * _cross(up, uq);
+		torque= kb * kb2 * _cross(up, uq);
 		F.w += kb * (D - cosine) * kb2;
 	}
+    T.x+=torque.x;
+    T.y+=torque.y;
+    T.z+=torque.z;
 }
 
 __device__ void bondedInteraction(c_number4 &poss ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qoss, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box, int pid,int qid,c_number &ro,c_number &k){
@@ -260,8 +290,7 @@ __device__ void bondedInteraction(c_number4 &poss ,c_number4 &a1, c_number4 &a2,
     
     CUDAspring(r,ro,k,F,rmod);
     // printf("Mag of force = %d\n",F.w);
-    printf("Radius = %d, ro = %d, k= %d\n",r,ro,k);
-    // CUDAbondedDoubleBending(a1,b1,F,T);
+    CUDAbondedDoubleBending(a1,b1,F,T);
     // if(qid-pid==1){
     //     CUDAbondedAlignment(r,a1,F,T,rmod,false);
     // }else if(pid-qid==1){
@@ -279,27 +308,103 @@ __device__ void nonbondedInteraction(c_number4 &ppos ,c_number4 &a1, c_number4 &
 }
 
 /////////////// Main Particle Interaction //////////////////////
+// __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
+//     // printf("IND = %d\n",IND);
+//     // printf("Initial force value F.w = %f\n",forces[IND].w);
+//     if(IND >= MD_N[0]) return; // for i > N leave
+//     c_number4 F = forces[IND];
+//     c_number4 T = torques[IND];
+// 	c_number4 ppos = poss[IND];
+// 	// GPU_quat po = ;
+// 	c_number4 a1, a2, a3;
+// 	get_vectors_from_quat(orientations[IND], a1, a2, a3);
+
+//     //Bonded Interactions
+//     // for(int p =0;p<connection[IND][0];p++){
+//     //     int id = connection[IND][p+1];
+//     //     c_number4 b1, b2, b3;
+//     //     get_vectors_from_quat(orientations[id], b1, b2, b3);
+//     //     bondedInteraction(ppos,a1,a2,a3,poss[id],b1,b2,b3,F,T,box,IND,id,ro[IND][p],k[IND][p]);
+//     // }
+
+
+//     // Non bonded interactions
+//     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
+//     for(int j = 0; j < num_neighs; j++) {
+// 		int k_index = NEXT_NEIGHBOUR(IND, j, matrix_neighs);
+
+//         if(k_index != IND && strand[IND]!=strand[k_index]) {
+//             // printf("For index = %i, kIndex = %i\n",IND,k_index);
+// 			c_number4 qpos = poss[k_index];
+//             c_number4 b1, b2, b3;
+//             get_vectors_from_quat(orientations[k_index], b1, b2, b3);
+//             c_number toatalRad = radius[IND] + radius[k_index];
+//             nonbondedInteraction(ppos,a1,a2,a3,qpos,b1,b2,b3,F,T,box,toatalRad,IND,k_index);
+//         }
+//     }
+
+//     F.w *= (c_number) 0.5f;
+//     forces[IND] = F;
+// 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
+// }
+
 __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
     // printf("IND = %d\n",IND);
     // printf("Initial force value F.w = %f\n",forces[IND].w);
     if(IND >= MD_N[0]) return; // for i > N leave
-
-    // c_number4 F = make_c_number4(0, 0, 0, 0);
-	// c_number4 T = make_c_number4(0, 0, 0, 0);
     c_number4 F = forces[IND];
     c_number4 T = torques[IND];
 	c_number4 ppos = poss[IND];
-	// GPU_quat po = ;
+    // printf("Position check = (%f,%f,%f,%f)\n",ppos.x,ppos.y,ppos.z,ppos.w);
+    // printf("Sigma = %f\n",rcut2);
 	c_number4 a1, a2, a3;
 	get_vectors_from_quat(orientations[IND], a1, a2, a3);
 
     //Bonded Interactions
-    // for(int p =0;p<connection[IND][0];p++){
-    //     int id = connection[IND][p+1];
-    //     c_number4 b1, b2, b3;
-    //     get_vectors_from_quat(orientations[id], b1, b2, b3);
-    //     bondedInteraction(ppos,a1,a2,a3,poss[id],b1,b2,b3,F,T,box,IND,id,ro[IND][p],k[IND][p]);
-    // }
+    for(int p =0;p<connection[IND][0];p++){
+        int id = connection[IND][p+1];
+        c_number4 b1, b2, b3;
+        get_vectors_from_quat(orientations[id], b1, b2, b3);
+        // printf("p= %i q= %i  r0= %f  k= %f\n",IND,id,ro[IND][p],k[IND][p]);
+        c_number4 r = box->minimum_image(ppos, poss[id]);
+        c_number sqr_r = CUDA_DOT(r, r);
+        c_number rmod = sqrt(sqr_r);
+        CUDAspring(r,2.f,10,F,rmod);
+
+        CUDAbondedDoubleBending(a1,b1,F,T);
+        bool straight;
+        c_number4 up,tp;
+        if(id-IND==1){
+            up = a1;
+            tp = r;
+
+            c_number4 force = ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
+            F.x -= force.x;
+            F.y -= force.y;
+            F.z -= force.z;
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+
+                c_number4 torque = -(ka*_cross(tp,up))/rmod;
+                T.x += torque.x;
+                T.y += torque.y;
+                T.z += torque.z;
+        }
+
+        if(IND-id==1){
+            up = b1;
+            tp = -r;
+
+            c_number4 force = ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
+            F.x += force.x;
+            F.y += force.y;
+            F.z += force.z;
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+            //     c_number4 torque = (ka*_cross(tp,up))/rmod;
+            //     T.x += torque.x;
+            //     T.y += torque.y;
+            //     T.z += torque.z;
+        }
+    }
 
 
     // Non bonded interactions
@@ -308,16 +413,27 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
 		int k_index = NEXT_NEIGHBOUR(IND, j, matrix_neighs);
 
         if(k_index != IND && strand[IND]!=strand[k_index]) {
-            printf("For index = %i, kIndex = %i\n",IND,k_index);
+            // printf("For index = %i, kIndex = %i\n",IND,k_index);
 			c_number4 qpos = poss[k_index];
             c_number4 b1, b2, b3;
             get_vectors_from_quat(orientations[k_index], b1, b2, b3);
-            c_number toatalRad = radius[IND] + radius[k_index];
-            nonbondedInteraction(ppos,a1,a2,a3,qpos,b1,b2,b3,F,T,box,toatalRad,IND,k_index);
+            c_number totalRad = radius[IND] + radius[k_index];
+            c_number4 r = box->minimum_image(ppos, qpos);
+            c_number sqr_r = CUDA_DOT(r, r);
+            // r.w = sqrt(sqr_r);
+            // printf("p= %i  q= %i  radius= (%f,%f,%f,%f)\n",IND,k_index,r.x,r.y,r.z,r.w);
+            c_number rSigma = totalRad*sigma;
+            c_number rRstar = totalRad*Rstar;
+            c_number rb = totalRad*patchyb;
+            c_number rRc = totalRad*Rc;
+            CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
+            // CUDArepulsive_lj2(1.f,r,F,rSigma,rRstar,rb,rRc);
+            // printf("p= %i  q= %i totalRadius= %f radius= (%f,%f,%f,%f)\n",IND,k_index, totalRad,rSigma,rRstar,rb,rRc);
         }
     }
 
-    F.w *= (c_number) 0.5f;
+    // F.w *= (c_number) 0.5f;
+    // printf("Force = (%f,%f,%f,%f)\n",F.x,F.y,F.z,F.w);
     forces[IND] = F;
 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
 }
@@ -346,13 +462,25 @@ void CUDAPHBInteraction::cuda_init(int N){
     number GPUhardVolCutoff = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
 
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(rcut2, &_sqr_rcut, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(sigma, &patchySigma, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rc, &patchyRc, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyRcutSqr, &patchyCutOff2, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(powAlpha, &patchyPowAlpha, sizeof(float)));
+    COPY_NUMBER_TO_FLOAT(rcut2, _sqr_rcut);
+    COPY_NUMBER_TO_FLOAT(sigma, patchySigma);
+    COPY_NUMBER_TO_FLOAT(patchyb, patchyB);
+    COPY_NUMBER_TO_FLOAT(Rstar, patchyRstar);
+    COPY_NUMBER_TO_FLOAT(Rc, patchyRc);
+    COPY_NUMBER_TO_FLOAT(patchyRcutSqr, patchyCutOff2);
+    COPY_NUMBER_TO_FLOAT(powAlpha, patchyPowAlpha);
+
+    COPY_NUMBER_TO_FLOAT(ka, _ka);
+    COPY_NUMBER_TO_FLOAT(kb, _kb);
+    COPY_NUMBER_TO_FLOAT(kt, _kt);
+    // COPY_ARRAY_TO_CONSTANT(connection, GPUconnections, MAXparticles * (MAXneighbour + 1));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rc, &patchyRc, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyRcutSqr, &patchyCutOff2, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(powAlpha, &patchyPowAlpha, sizeof(float)));
+
+
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyEps, &patchyEpsilon, sizeof(float)));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(hardVolCutoff, &GPUhardVolCutoff, sizeof(float)));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(n_forces, &_n_forces, sizeof(int)));
@@ -367,9 +495,9 @@ void CUDAPHBInteraction::cuda_init(int N){
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(radius, &GPUradius, sizeof(float) * MAXparticles));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(mass, &GPUmass, sizeof(float) * MAXparticles));
 
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(ka, &_ka, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kb, &_kb, sizeof(float)));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(kt, &_kt, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(ka, &_ka, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(kb, &_kb, sizeof(float)));
+    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(kt, &_kt, sizeof(float)));
 
     // std::cout<<"CUDA Connection Info"<<std::endl;
     // for(int i=0;i<7;i++){
@@ -418,7 +546,7 @@ void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, 
     // (d_poss, d_orientations, d_forces, d_torques, _update_st, _d_st);
     // Partiles disctributes in the grid
 
-
+    // std::cout<<d_poss[0].x<<d_poss[0].y<<d_poss[0].z<<std::endl;
     CUDAparticle <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>> 
     (d_poss, d_orientations, d_forces,  d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
 
