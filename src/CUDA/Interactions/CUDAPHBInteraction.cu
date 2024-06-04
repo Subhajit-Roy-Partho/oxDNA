@@ -13,6 +13,7 @@ __constant__ float hardVolCutoff;
 __constant__ int MD_N[1];
 __constant__ int n_forces;
 __constant__ float B2;
+__constant__ float invPowAlpha;
 
 __constant__ float patches[GPUmaxiP][5];// color,strength,x,y,z
 __constant__ int numPatches[GPUmaxiC][MaxPatches];// num, patch1, patch2, patch3, patch4, patch5, patch6
@@ -57,7 +58,7 @@ __device__ void rotateVectorAroundVector(c_number4 &v, c_number4 &axis, c_number
 __device__ void CUDAspring(c_number4 &r, c_number r0, c_number k, c_number4 &F, c_number &rmod)
 {
     c_number dist = rmod - r0;
-    F.w += 0.25f * k * dist * dist;
+    F.w += 0.5f * k * dist * dist;
     c_number magForce = (k * dist) / rmod;
     F.x += r.x * magForce;
     F.y += r.y * magForce;
@@ -92,6 +93,8 @@ __device__ void CUDAspring(c_number4 &r, c_number r0, c_number k, c_number4 &F, 
 // 	}
 // }
 
+
+// CPU hits stuff twice for each pair of particles
 __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc,c_number r2)
 {
     // auto r2 = CUDA_DOT(r, r);
@@ -99,20 +102,20 @@ __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_
     {
         if (r2 > SQR(rstar))
         {
-            c_number rmod = sqrt(r2);
+            c_number rmod = sqrtf(r2);
             c_number rrc = rmod - rc;
-            c_number fmod = 2.f * prefactor * b * rrc / rmod;
+            c_number fmod = 4.f * prefactor * b * rrc / rmod;
             F.x += r.x * fmod;
             F.y += r.y * fmod;
             F.z += r.z * fmod;
-            F.w += prefactor * b * SQR(rrc);
+            F.w += prefactor * b * SQR(rrc)*2;
         }else{
             c_number lj_part = CUB(SQR(sigma) / r2);
-            c_number fmod = 24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / r2;
+            c_number fmod = 48.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / r2;
             F.x += r.x * fmod;
             F.y += r.y * fmod;
             F.z += r.z * fmod;
-            F.w += 4.f * prefactor * (SQR(lj_part) - lj_part);
+            F.w += 8.f * prefactor * (SQR(lj_part) - lj_part);
         }
     }
 }
@@ -223,12 +226,12 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
         // printf("p= %i q= %i  r0= %f  k= %f\n",IND,id,ro[IND][p],k[IND][p]);
         c_number4 r = box->minimum_image(ppos, poss[id]);
         c_number sqr_r = CUDA_DOT(r, r);
-        c_number rmod = sqrt(sqr_r);
+        c_number rmod = sqrtf(sqr_r);
         CUDAspring(r,2.f,10,F,rmod);
         
 
         CUDAbondedDoubleBending(a1,b1,F,T);
-        bool straight;
+        // bool straight;
         c_number4 up,tp;
         if(id-IND==1){
             up = a1;
@@ -238,12 +241,11 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             F.x -= force.x;
             F.y -= force.y;
             F.z -= force.z;
-            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod)/2;
-
-                c_number4 torque = -(ka*_cross(tp,up))/rmod;
-                T.x += torque.x;
-                T.y += torque.y;
-                T.z += torque.z;
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+            c_number4 torque = -(ka*_cross(tp,up))/rmod;
+            T.x += torque.x;
+            T.y += torque.y;
+            T.z += torque.z;
         }
 
         if(IND-id==1){
@@ -254,11 +256,11 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             F.x += force.x;
             F.y += force.y;
             F.z += force.z;
-            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod)/2;
-            //     c_number4 torque = (ka*_cross(tp,up))/rmod;
-            //     T.x += torque.x;
-            //     T.y += torque.y;
-            //     T.z += torque.z;
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+                // c_number4 torque = -(ka*_cross(tp,up))/rmod;
+                // T.x += torque.x;
+                // T.y += torque.y;
+                // T.z += torque.z;
         }
     }
 
@@ -287,7 +289,7 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             // printf("p= %i  q= %i  radius= (%f,%f,%f,%f)\n",IND,k_index,r.x,r.y,r.z,r.w);
             c_number rSigma = totalRad*sigma;
             c_number rRstar = totalRad*Rstar;
-            c_number rb = totalRad*patchyb;
+            c_number rb = patchyb/SQR(totalRad);
             c_number rRc = totalRad*Rc;
             CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
 
@@ -322,8 +324,9 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
                         c_number dist = CUDA_DOT(patchDist,patchDist);
                         if(patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr){
                             c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
-                            c_number r2b2 = dist*B2;
-                            c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                            // c_number r2b2 = dist*B2;
+                            // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                            c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
                             c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
                             F.w+= exp_part;
                             c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
@@ -342,7 +345,6 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
         }
     }
 
-    // F.w *= (c_number) 0.5f;
     // printf("Force = (%f,%f,%f,%f)\n",F.x,F.y,F.z,F.w);
     forces[IND] = F;
 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
@@ -371,7 +373,9 @@ void CUDAPHBInteraction::cuda_init(int N){
     number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
     number GPUhardVolCutoff = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
 
-    float invPow2 = SQR(1.f / patchyAlpha);
+    float invPow2 = 1.f / SQR(patchyAlpha);
+    // float invAlpha = patchyAlpha*patchyAlpha*patchyAlpha*patchyAlpha*patchyAlpha;
+    COPY_NUMBER_TO_FLOAT(invPowAlpha, invPatchyPowAlpha);
     COPY_NUMBER_TO_FLOAT(B2, invPow2);
     std::cout<<"Patchy Alpha"<<patchyAlpha<<std::endl;
     std::cout<<"Inverse patchy Alpha square"<<invPow2<<std::endl;

@@ -98,11 +98,11 @@ number PHBInteraction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q,
 	auto *qCG = static_cast<PHBParticle*>(q);
 	// std::cout<< "this is called "<< std::endl;
 	if(pCG->has_bond(q)){
-		// energy += spring(pCG,qCG,compute_r,update_forces);
-		// // energy += bonded_twist(pCG, qCG, false, update_forces);
-		// // energy += falseTwist(pCG, qCG, false, update_forces);
-		// energy += bonded_double_bending(pCG, qCG, false, update_forces);
-		// energy += bonded_alignment(pCG, qCG, false, update_forces);
+		energy += spring(pCG,qCG,compute_r,update_forces);
+		// // // energy += bonded_twist(pCG, qCG, false, update_forces);
+		// // // energy += falseTwist(pCG, qCG, false, update_forces);
+		energy += bonded_double_bending(pCG, qCG, false, update_forces);
+		energy += bonded_alignment(pCG, qCG, false, update_forces);
 	}
 	return energy;
 };
@@ -113,8 +113,8 @@ number PHBInteraction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle 
 	// cout<< "this is called "<< std::endl;
 	if(!pCG->has_bond(q)){
 		// cout<<"Radius : " << pCG->radius << " " << qCG->radius << endl;
-		// energy+=exc_vol_nonbonded(p,q,compute_r,update_forces);
-		// energy+=patchy_interaction_notorsion(pCG,qCG,compute_r,update_forces);
+		energy+=exc_vol_nonbonded(p,q,compute_r,update_forces);
+		energy+=patchy_interaction_notorsion(pCG,qCG,compute_r,update_forces);
 	}
 	return energy;
 };
@@ -741,11 +741,11 @@ number PHBInteraction::patchy_interaction_notorsion(PHBParticle *p, PHBParticle 
 				LR_vector patch_dist = _computed_r + qpatch - ppatch;
 				// patch_dist += patch_dist*patchyIntercept/patch_dist.norm();
 				number dist = patch_dist.norm();
-				if(dist < patchyCutOff2){
+				if(dist < patchyRcut2){
 					c++;
                     number energy_ij = 0;
 
-				    number r8b10 = dist*dist*dist*dist / patchyPowAlpha;
+				    number r8b10 = dist*dist*dist*dist *invPatchyPowAlpha;
 				    number exp_part = -1* exp(-1.f*r8b10 * dist)*K;
                     energy +=exp_part;
 					
@@ -759,7 +759,7 @@ number PHBInteraction::patchy_interaction_notorsion(PHBParticle *p, PHBParticle 
 						}
 
 						LR_vector tmp_force = patch_dist*(10 * exp_part * r8b10); //patch_dist * (f1D * angular_part);
-						cout<<r8b10<<" "<<dist<<" "<<exp_part<<" "<<tmp_force.norm()<<endl;
+						// cout<<r8b10<<" "<<dist<<" "<<exp_part<<" "<<tmp_force.norm()<<endl;
 						p->torque -= p->orientationT * ppatch.cross(tmp_force);
 						q->torque += q->orientationT * qpatch.cross(tmp_force);
 
