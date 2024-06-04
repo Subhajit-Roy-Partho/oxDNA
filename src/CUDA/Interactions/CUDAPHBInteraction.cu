@@ -12,6 +12,7 @@ __constant__ float patchyEps;
 __constant__ float hardVolCutoff;
 __constant__ int MD_N[1];
 __constant__ int n_forces;
+__constant__ float B2;
 
 __constant__ float patches[GPUmaxiP][5];// color,strength,x,y,z
 __constant__ int numPatches[GPUmaxiC][MaxPatches];// num, patch1, patch2, patch3, patch4, patch5, patch6
@@ -67,29 +68,29 @@ __device__ void CUDAspring(c_number4 &r, c_number r0, c_number k, c_number4 &F, 
 
 ///////////////////Voulume Exclusion /////////////////////////
 
-__device__ void CUDArepulsive_lj2(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc) {
-	c_number rnorm = CUDA_DOT(r, r);
-	if(rnorm < SQR(rc)) {
-		if(rnorm > SQR(rstar)) {
-			c_number rmod = sqrtf(rnorm);
-			c_number rrc = rmod - rc;
-			c_number part = prefactor * b * rrc;
-			F.x += r.x * (2.f * part / rmod);
-			F.y += r.y * (2.f * part / rmod);
-			F.z += r.z * (2.f * part / rmod);
-			F.w += part * rrc;
-		}
-		else {
-			c_number tmp = SQR(sigma) / rnorm;
-			c_number lj_part = tmp * tmp * tmp;
-			// the additive term was added by me to mimick Davide's implementation
-			F.x += r.x * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
-			F.y += r.y * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
-			F.z += r.z * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
-			F.w += 4.f * prefactor * (SQR(lj_part) - lj_part) + prefactor;
-		}
-	}
-}
+// __device__ void CUDArepulsive_lj2(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc) {
+// 	c_number rnorm = CUDA_DOT(r, r);
+// 	if(rnorm < SQR(rc)) {
+// 		if(rnorm > SQR(rstar)) {
+// 			c_number rmod = sqrtf(rnorm);
+// 			c_number rrc = rmod - rc;
+// 			c_number part = prefactor * b * rrc;
+// 			F.x += r.x * (2.f * part / rmod);
+// 			F.y += r.y * (2.f * part / rmod);
+// 			F.z += r.z * (2.f * part / rmod);
+// 			F.w += part * rrc;
+// 		}
+// 		else {
+// 			c_number tmp = SQR(sigma) / rnorm;
+// 			c_number lj_part = tmp * tmp * tmp;
+// 			// the additive term was added by me to mimick Davide's implementation
+// 			F.x += r.x * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+// 			F.y += r.y * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+// 			F.z += r.z * (24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / rnorm);
+// 			F.w += 4.f * prefactor * (SQR(lj_part) - lj_part) + prefactor;
+// 		}
+// 	}
+// }
 
 __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc,c_number r2)
 {
@@ -112,111 +113,6 @@ __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_
             F.y += r.y * fmod;
             F.z += r.z * fmod;
             F.w += 4.f * prefactor * (SQR(lj_part) - lj_part);
-        }
-    }
-}
-
-__device__ void CUDAexeVolCub(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc)
-{
-    auto r2 = CUDA_DOT(r, r);
-    if (r2 < SQR(rc))
-    {
-        if (r2 > SQR(rstar))
-        {
-            c_number rmod = sqrt(r2);
-            c_number rrc = rmod - rc;
-            c_number fmod = 2.f * prefactor * b * CUB(rrc) / rmod;
-            F.x -= r.x * fmod;
-            F.y -= r.y * fmod;
-            F.z -= r.z * fmod;
-            F.w += prefactor * b * SQR(SQR(rrc));
-            return;
-        }
-        c_number lj_part = CUB(SQR(sigma) / r2);
-        c_number fmod = 24.f * prefactor * (lj_part - 2.f * SQR(lj_part)) / r2;
-        F.x -= r.x * fmod;
-        F.y -= r.y * fmod;
-        F.z -= r.z * fmod;
-        F.w += 4.f * prefactor * (SQR(lj_part) - lj_part);
-        return;
-    }
-}
-
-__device__ void CUDAexeVolHard(c_number4 &r, c_number4 &F)
-{
-    c_number r2 = CUDA_DOT(r, r);
-    c_number part = powf(sigma / r2, patchyb * 0.5);
-    F.w += part - hardVolCutoff;
-    c_number fmod = patchyb * part / r2;
-    F.x -= r.x * fmod;
-    F.y -= r.y * fmod;
-    F.z -= r.z * fmod;
-}
-
-/////////////////// Patchy Interaction /////////////////////////
-
-// __device__ void CUDApatchy(c_number4 &r, c_number4 &pa1, c_number4 &pa2, c_number4 &pa3, c_number4 &qa1, c_number4 &qa2, c_number4 &qa3, c_number4 &F, c_number4 &tor, int ptype, int qtype)
-// {
-//     for (int pi = 0; pi < GPUnumPatches[ptype]; pi++)
-//     {
-//         c_number4 ppatch = {pa1.x * GPUbasePatchConfig[ptype][pi].x + pa2.x * GPUbasePatchConfig[ptype][pi].y + pa3.x * GPUbasePatchConfig[ptype][pi].z, pa1.y * GPUbasePatchConfig[ptype][pi].x + pa2.y * GPUbasePatchConfig[ptype][pi].y + pa3.y * GPUbasePatchConfig[ptype][pi].z, pa1.z * GPUbasePatchConfig[ptype][pi].x + pa2.z * GPUbasePatchConfig[ptype][pi].y + pa3.z * GPUbasePatchConfig[ptype][pi].z, 0};
-//         ppatch *= sigma;
-//         for (int pj = 0; pj < GPUnumPatches[qtype]; pj++)
-//         {
-//             c_number4 qpatch = {qa1.x * GPUbasePatchConfig[qtype][pj].x + qa2.x * GPUbasePatchConfig[qtype][pj].y + qa3.x * GPUbasePatchConfig[qtype][pj].z, qa1.y * GPUbasePatchConfig[qtype][pj].x + qa2.y * GPUbasePatchConfig[qtype][pj].y + qa3.y * GPUbasePatchConfig[qtype][pj].z, qa1.z * GPUbasePatchConfig[qtype][pj].x + qa2.z * GPUbasePatchConfig[qtype][pj].y + qa3.z * GPUbasePatchConfig[qtype][pj].z, 0};
-//             qpatch *= sigma;
-//             c_number4 patch_dist = {r.x + qpatch.x - ppatch.x, r.y + qpatch.y - ppatch.y, r.z + qpatch.z - ppatch.z, 0};
-//             c_number dist = CUDA_DOT(patch_dist, patch_dist);
-//             if (dist < patchyRcutSqr)
-//             {
-//                 c_number r8b10 = dist * dist * dist * dist / patchyAlpha;
-//                 c_number exp_part = -1.001f * patchyEpsilon * expf(-0.5f * r8b10 * dist);
-//                 F.w += exp_part;
-//                 c_number4 tmp_force = patch_dist * (5.f * exp_part * r8b10);
-//                 tor -= _cross(ppatch, tmp_force);
-//                 F.x -= tmp_force.x;
-//                 F.y -= tmp_force.y;
-//                 F.z -= tmp_force.z;
-//             }
-//         }
-//     }
-// };
-
-__device__ void CUDApatchySimple(c_number4 &r, c_number4 &a1, c_number4 &a2, c_number4 &a3, c_number4 &b1, c_number4 &b2, c_number4 &b3, c_number4 &F, c_number4 &T,int pi,int pj){
-    for(int i=0;i<numPatches[pi][0];i++){
-        c_number4 ppatch = { // p patch location
-            a1.x * patches[numPatches[pi][i+1]][2] + a2.x * patches[numPatches[pi][i+1]][3] + a3.x * patches[numPatches[pi][i+1]][4],
-            a1.y * patches[numPatches[pi][i+1]][2] + a2.y * patches[numPatches[pi][i+1]][3] + a3.y * patches[numPatches[pi][i+1]][4],
-            a1.z * patches[numPatches[pi][i+1]][2] + a2.z * patches[numPatches[pi][i+1]][3] + a3.z * patches[numPatches[pi][i+1]][4],
-            0.f
-        };
-        for(int j=0;j<numPatches[pj][0];j++){
-            if(patches[numPatches[pi][i+1]][0]+patches[numPatches[pj][j+1]][0]!=0) continue; // if non complimentary color skip
-            c_number4 qpatch={ // q patch location
-                b1.x * patches[numPatches[pj][j+1]][2] + b2.x * patches[numPatches[pj][j+1]][3] + b3.x * patches[numPatches[pj][j+1]][4],
-                b1.y * patches[numPatches[pj][j+1]][2] + b2.y * patches[numPatches[pj][j+1]][3] + b3.y * patches[numPatches[pj][j+1]][4],
-                b1.z * patches[numPatches[pj][j+1]][2] + b2.z * patches[numPatches[pj][j+1]][3] + b3.z * patches[numPatches[pj][j+1]][4],
-                0.f
-            };
-
-            c_number4 patch_dist = {
-                r.x + qpatch.x - ppatch.x, 
-                r.y + qpatch.y - ppatch.y, 
-                r.z + qpatch.z - ppatch.z, 
-                0.f
-            };
-            c_number dist = CUDA_DOT(patch_dist, patch_dist);
-            if(dist>patchyRcutSqr) continue; // for larger distances skip
-            c_number strength = patches[numPatches[pi][i+1]][1]*patches[numPatches[pj][j+1]][1];
-            c_number r8b10 = dist * dist * dist * dist / powAlpha;
-            c_number exp_part = -1.f* exp(-0.5f * r8b10 * dist)*strength;
-            F.w+= exp_part;
-
-            c_number4 tmp_force = patch_dist * (5.f * exp_part * r8b10)*strength;
-            T -= _cross(ppatch, tmp_force);
-            F.x -= tmp_force.x;
-            F.y -= tmp_force.y;
-            F.z -= tmp_force.z;
         }
     }
 }
@@ -284,68 +180,27 @@ __device__ void CUDAbondedDoubleBending(c_number4 &up, c_number4 &uq,c_number4 &
     T.z+=torque.z;
 }
 
-__device__ void bondedInteraction(c_number4 &poss ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qoss, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box, int pid,int qid,c_number &ro,c_number &k){
-    c_number4 r = box->minimum_image(poss, qoss);
-    c_number rmod = sqrt(CUDA_DOT(r, r));
+// __device__ void bondedInteraction(c_number4 &poss ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qoss, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box, int pid,int qid,c_number &ro,c_number &k){
+//     c_number4 r = box->minimum_image(poss, qoss);
+//     c_number rmod = sqrt(CUDA_DOT(r, r));
     
-    CUDAspring(r,ro,k,F,rmod);
-    // printf("Mag of force = %d\n",F.w);
-    CUDAbondedDoubleBending(a1,b1,F,T);
-    // if(qid-pid==1){
-    //     CUDAbondedAlignment(r,a1,F,T,rmod,false);
-    // }else if(pid-qid==1){
-    //     CUDAbondedAlignment(r,b1,F,T,rmod,true);
-    // }
-}
-
-__device__ void nonbondedInteraction(c_number4 &ppos ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qpos, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box,c_number totRad,int pi,int pj){
-    c_number4 r = box->minimum_image(ppos, qpos);
-    c_number sqr_r = CUDA_DOT(r, r);
-    if(sqr_r>rcut2) return;
-    
-    CUDAexeVolLin(1.f,r,F,sigma*totRad,Rstar*totRad,patchyb/SQR(totRad),Rc*totRad,sqr_r);
-    CUDApatchySimple(r,a1,a2,a3,b1,b2,b3,F,T,pi,pj);
-}
-
-/////////////// Main Particle Interaction //////////////////////
-// __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
-//     // printf("IND = %d\n",IND);
-//     // printf("Initial force value F.w = %f\n",forces[IND].w);
-//     if(IND >= MD_N[0]) return; // for i > N leave
-//     c_number4 F = forces[IND];
-//     c_number4 T = torques[IND];
-// 	c_number4 ppos = poss[IND];
-// 	// GPU_quat po = ;
-// 	c_number4 a1, a2, a3;
-// 	get_vectors_from_quat(orientations[IND], a1, a2, a3);
-
-//     //Bonded Interactions
-//     // for(int p =0;p<connection[IND][0];p++){
-//     //     int id = connection[IND][p+1];
-//     //     c_number4 b1, b2, b3;
-//     //     get_vectors_from_quat(orientations[id], b1, b2, b3);
-//     //     bondedInteraction(ppos,a1,a2,a3,poss[id],b1,b2,b3,F,T,box,IND,id,ro[IND][p],k[IND][p]);
+//     CUDAspring(r,ro,k,F,rmod);
+//     // printf("Mag of force = %d\n",F.w);
+//     CUDAbondedDoubleBending(a1,b1,F,T);
+//     // if(qid-pid==1){
+//     //     CUDAbondedAlignment(r,a1,F,T,rmod,false);
+//     // }else if(pid-qid==1){
+//     //     CUDAbondedAlignment(r,b1,F,T,rmod,true);
 //     // }
+// }
 
-
-//     // Non bonded interactions
-//     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
-//     for(int j = 0; j < num_neighs; j++) {
-// 		int k_index = NEXT_NEIGHBOUR(IND, j, matrix_neighs);
-
-//         if(k_index != IND && strand[IND]!=strand[k_index]) {
-//             // printf("For index = %i, kIndex = %i\n",IND,k_index);
-// 			c_number4 qpos = poss[k_index];
-//             c_number4 b1, b2, b3;
-//             get_vectors_from_quat(orientations[k_index], b1, b2, b3);
-//             c_number toatalRad = radius[IND] + radius[k_index];
-//             nonbondedInteraction(ppos,a1,a2,a3,qpos,b1,b2,b3,F,T,box,toatalRad,IND,k_index);
-//         }
-//     }
-
-//     F.w *= (c_number) 0.5f;
-//     forces[IND] = F;
-// 	torques[IND] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
+// __device__ void nonbondedInteraction(c_number4 &ppos ,c_number4 &a1, c_number4 &a2, c_number4 &a3,c_number4 &qpos, c_number4 &b1, c_number4 &b2, c_number4 &b3,c_number4 &F, c_number4 &T, CUDABox *box,c_number totRad,int pi,int pj){
+//     c_number4 r = box->minimum_image(ppos, qpos);
+//     c_number sqr_r = CUDA_DOT(r, r);
+//     if(sqr_r>rcut2) return;
+    
+//     CUDAexeVolLin(1.f,r,F,sigma*totRad,Rstar*totRad,patchyb/SQR(totRad),Rc*totRad,sqr_r);
+//     CUDApatchySimple(r,a1,a2,a3,b1,b2,b3,F,T,pi,pj);
 // }
 
 __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
@@ -370,6 +225,7 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
         c_number sqr_r = CUDA_DOT(r, r);
         c_number rmod = sqrt(sqr_r);
         CUDAspring(r,2.f,10,F,rmod);
+        
 
         CUDAbondedDoubleBending(a1,b1,F,T);
         bool straight;
@@ -382,7 +238,7 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             F.x -= force.x;
             F.y -= force.y;
             F.z -= force.z;
-            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod)/2;
 
                 c_number4 torque = -(ka*_cross(tp,up))/rmod;
                 T.x += torque.x;
@@ -398,7 +254,7 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             F.x += force.x;
             F.y += force.y;
             F.z += force.z;
-            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+            F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod)/2;
             //     c_number4 torque = (ka*_cross(tp,up))/rmod;
             //     T.x += torque.x;
             //     T.y += torque.y;
@@ -406,6 +262,13 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
         }
     }
 
+
+
+    // for(int j=0;j<numPatches[IND][0];j++){
+    //     printf("i = %i  j = %i  patches = %i \n",IND,j,numPatches[IND][j+1]);
+    // }
+
+    // printf("i=%i  iC=%i\n",IND,iC[IND]);
 
     // Non bonded interactions
     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
@@ -427,8 +290,55 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
             c_number rb = totalRad*patchyb;
             c_number rRc = totalRad*Rc;
             CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
-            // CUDArepulsive_lj2(1.f,r,F,rSigma,rRstar,rb,rRc);
-            // printf("p= %i  q= %i totalRadius= %f radius= (%f,%f,%f,%f)\n",IND,k_index, totalRad,rSigma,rRstar,rb,rRc);
+
+            // Patchy Interaction //
+            int pParticleColor = iC[IND];
+            int qParticleColor = iC[k_index];
+            if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){
+                // printf("i=%i  j=%i\n",IND,k_index);
+                for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+                    c_number4 ppatch ={
+                        a1.x*patches[numPatches[pParticleColor][pi+1]][2]+a2.x*patches[numPatches[pParticleColor][pi+1]][3]+a3.x*patches[numPatches[pParticleColor][pi+1]][4],
+                        a1.y*patches[numPatches[pParticleColor][pi+1]][2]+a2.y*patches[numPatches[pParticleColor][pi+1]][3]+a3.y*patches[numPatches[pParticleColor][pi+1]][4],
+                        a1.z*patches[numPatches[pParticleColor][pi+1]][2]+a2.z*patches[numPatches[pParticleColor][pi+1]][3]+a3.z*patches[numPatches[pParticleColor][pi+1]][4],
+                        0.f
+                    };
+                    // printf("i=%i  j=%i  ppatch= (%f,%f,%f,%f)",IND,k_index,ppatch.x,ppatch.y,ppatch.z);
+                    for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+                    //     // printf("i=%i  j=%i\n",IND,k_index);
+                        c_number4 qpatch={
+                            b1.x*patches[numPatches[qParticleColor][qj+1]][2]+b2.x*patches[numPatches[qParticleColor][qj+1]][3]+b3.x*patches[numPatches[qParticleColor][qj+1]][4],
+                            b1.y*patches[numPatches[qParticleColor][qj+1]][2]+b2.y*patches[numPatches[qParticleColor][qj+1]][3]+b3.y*patches[numPatches[qParticleColor][qj+1]][4],
+                            b1.z*patches[numPatches[qParticleColor][qj+1]][2]+b2.z*patches[numPatches[qParticleColor][qj+1]][3]+b3.z*patches[numPatches[qParticleColor][qj+1]][4],
+                            0.f
+                        };
+                    //     // printf("i=%i  j=%i  qpatch= (%f,%f,%f,%f)\nS",IND,k_index,qpatch.x,qpatch.y,qpatch.z);
+                        c_number4 patchDist ={
+                            r.x+qpatch.x-ppatch.x,
+                            r.y+qpatch.y-ppatch.y,
+                            r.z+qpatch.z-ppatch.z,
+                            0.f
+                        };
+                        c_number dist = CUDA_DOT(patchDist,patchDist);
+                        if(patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr){
+                            c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+                            c_number r2b2 = dist*B2;
+                            c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                            c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+                            F.w+= exp_part;
+                            c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+
+                            c_number4 torque = _cross(ppatch,tmp_force);
+                            F.x -= tmp_force.x;
+                            F.y -= tmp_force.y;
+                            F.z -= tmp_force.z;
+                            T.x -= torque.x;
+                            T.y -= torque.y;
+                            T.z -= torque.z;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -461,18 +371,26 @@ void CUDAPHBInteraction::cuda_init(int N){
     number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
     number GPUhardVolCutoff = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
 
+    float invPow2 = SQR(1.f / patchyAlpha);
+    COPY_NUMBER_TO_FLOAT(B2, invPow2);
+    std::cout<<"Patchy Alpha"<<patchyAlpha<<std::endl;
+    std::cout<<"Inverse patchy Alpha square"<<invPow2<<std::endl;
+
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
     COPY_NUMBER_TO_FLOAT(rcut2, _sqr_rcut);
     COPY_NUMBER_TO_FLOAT(sigma, patchySigma);
     COPY_NUMBER_TO_FLOAT(patchyb, patchyB);
     COPY_NUMBER_TO_FLOAT(Rstar, patchyRstar);
     COPY_NUMBER_TO_FLOAT(Rc, patchyRc);
-    COPY_NUMBER_TO_FLOAT(patchyRcutSqr, patchyCutOff2);
+    COPY_NUMBER_TO_FLOAT(patchyRcutSqr, patchyRcut2);
     COPY_NUMBER_TO_FLOAT(powAlpha, patchyPowAlpha);
+    // std::cout<<"Patchy Power Alpha = "<<patchyPowAlpha<<std::endl;
 
     COPY_NUMBER_TO_FLOAT(ka, _ka);
     COPY_NUMBER_TO_FLOAT(kb, _kb);
     COPY_NUMBER_TO_FLOAT(kt, _kt);
+
+    // COPY_ARRAY_TO_CONSTANT(patches,&GPUnumPatches,GPUmaxiP*5);
     // COPY_ARRAY_TO_CONSTANT(connection, GPUconnections, MAXparticles * (MAXneighbour + 1));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
@@ -484,8 +402,10 @@ void CUDAPHBInteraction::cuda_init(int N){
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyEps, &patchyEpsilon, sizeof(float)));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(hardVolCutoff, &GPUhardVolCutoff, sizeof(float)));
     // CUDA_SAFE_CALL(cudaMemcpyToSymbol(n_forces, &_n_forces, sizeof(int)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patches, &GPUpatches, sizeof(float) * GPUmaxiP * 5));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(numPatches, &MD_NumPatches, sizeof(int) * GPUmaxiC * MaxPatches));
+
+
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patches, &GPUpatches, sizeof(float) * GPUmaxiP * 5));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(numPatches, &GPUnumPatches, sizeof(int) * GPUmaxiC * MaxPatches));
 
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(connection, &GPUconnections, sizeof(int) * MAXparticles * (MAXneighbour + 1)));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(ro, &GPUro, sizeof(float) * MAXparticles * MAXneighbour));
