@@ -584,7 +584,7 @@ void MD_CUDABackend::sim_step() {
 	_forces_second_step();
 	if(_print_energy) {
 		c_number energy = GpuUtils::sum_c_number4_to_double_on_GPU(_d_forces, N());
-		_backend_info = Utils::sformat("\tCUDA_energy: %lf", energy / (2. * N()));
+		_backend_info = Utils::sformat("\t%lf", energy / (2. * N()));
 	}
 
 	_update_stress_tensor();
