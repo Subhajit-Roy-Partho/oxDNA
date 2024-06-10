@@ -140,6 +140,7 @@ SET(interactions_SOURCES
 	Interactions/DNANMInteraction.cpp
 	Interactions/RNANMInteraction.cpp
 	Interactions/PHBInteraction.cpp
+	Interactions/PSP2Interaction.cpp
 )
 
 SET(move_SOURCES
@@ -204,6 +205,7 @@ SET(common_SOURCES
 	Particles/CCGParticle.cpp
 	Particles/PatchyParticle.cpp
 	Particles/PatchyParticleDan.cpp
+	Particles/PSP2Particle.cpp
 	# Particles/PatchyShapeParticle.cpp
 	Particles/SpheroCylinder.cpp
 	Particles/CustomParticle.cpp
