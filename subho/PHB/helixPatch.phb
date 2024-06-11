@@ -1,0 +1,22 @@
+2 2 1 0.1
+# Header = Total Particles,Strands, Version, Patch Spacer
+
+# iP = iP, color, strength,pos x y z, a1 x y z, a3 x y z
+iP 0 21 100 10 0 0 1 0 0 0 1 0
+iP 1 -21 100 -10 0 0 1 0 0 0 1 0
+
+# iC = ParticleColor, patch ids ...
+iC 0 0
+iC 1 1
+
+# iK = ParticleType, k of moment of inertia
+iK -3 0.6666666
+iK -4 0.4
+
+# iM = ParticleType, mass of the particle
+iM -3 85
+iM -4 1
+
+# Body for helix =  particleType, strand,color,radius, mass ,neighbour, bfactor, r0
+-3 0 0 10 85
+-3 1 1 10 85
