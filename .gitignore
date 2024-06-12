@@ -79,3 +79,4 @@ select_compute_arch_laptop.cmake
 **/trajectory.dat
 **/trajectory*.dat
 *.mgl
+out*.txt

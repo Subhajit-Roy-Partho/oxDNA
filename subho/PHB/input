@@ -17,7 +17,7 @@ max_density_multiplier = 10
 ####    SIM PARAMETERS    ####
 ##############################
 ### Universal Params ###
-T = 0.2
+T = 0.1
 T_force_value = true
 verlet_skin = 0.25
 sim_type = MD
@@ -50,14 +50,14 @@ ensemble = NVT
 
 ##############################
 #parfile = replica.par
-topology = helixPatch.phb
-conf_file = helixPatch.dat
-trajectory_file = trajectory.dat
-lastconf_file=last_conf2.dat
+topology = helixS1000.phb
+conf_file = helixS1000.dat
+trajectory_file = trajectoryS1000.dat
+lastconf_file=last_conf.dat
 log_file = log.ign
 no_stdout_energy = 0
 restart_step_counter = 1
-energy_file = energy.ign
+energy_file = energS1000.ign
 print_conf_interval = 1e4
 print_energy_every = 1e4
 time_scale = linear
@@ -66,5 +66,6 @@ time_scale = linear
 #patchyB = 10
 # rcut is essential for now
 rcut = 20
-patchyAlpha=0.05
-#patchyB=6675
+patchyAlpha=0.1
+#patchyB=66750
+#patchyRc=0.9999998
