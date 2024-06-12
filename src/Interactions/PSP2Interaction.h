@@ -9,24 +9,26 @@
 #include <sstream>
 #include <cmath>
 
-#define MAXparticles 5000 // maximum number of particles
+#define MAXparticles 5 // maximum number of particles
 #define MAXPatches 1
 #define MAXSprings 2
 #define MAXPatchPerParticle 1
 #define MAXSpringPerParticle 12
-#define MAXneighbour 5 // number of bonded neighbout one particle is connected t0
+#define MAXneighbour 12 // number of bonded neighbout one particle is connected t0
 
 class PSP2Interaction: public BaseInteraction {
 protected:
 public:
+	number rnorm, rmod;
     int particleNum,strands,maxPatches,maxSprings; // header
+	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyCutOff=1.5,patchyAlpha=0.12;
 
 	number particleRadius[MAXparticles];
-	number particleStrand[MAXparticles];
-	number Patches[MAXPatches][5];
-	number Springs[MAXSprings][5];
-	number ParticlePatches[MAXparticles][MAXPatchPerParticle+1];
-	number ParticleSprings[MAXparticles][MAXSpringPerParticle+1];
+	int particleStrand[MAXparticles];
+	number Patches[MAXPatches][5]; // color,strength,x,y,z
+	number Springs[MAXSprings][5]; // k, ro , x,y,z
+	int ParticlePatches[MAXparticles][MAXPatchPerParticle+1];
+	int ParticleSprings[MAXparticles][MAXSpringPerParticle];
 	int connections[MAXparticles][MAXneighbour+1];
 
 
@@ -52,7 +54,26 @@ public:
 	virtual number pair_interaction(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false); //Check bonded or non-bonded
 	virtual number pair_interaction_bonded(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false); // Bonded particle interaction
 	virtual number pair_interaction_nonbonded(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false); //Non-bonded particle interaction
+
+	// Bonded Interactions
+
+	virtual number torqueSpring(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false);
+
+	// Non-bonded Interactions
+	virtual number exeVol(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false);
+	virtual number repulsiveLinear(number prefactor, const LR_vector &r, LR_vector &force, number sigma, number rstar, number b, number rc, bool update_forces); //Excluded volume with pre-factor
+	virtual number simplePatch(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false);
+
+
+
+	//Common Functions
+	bool bonded(BaseParticle *p, BaseParticle *q);
+
+	
 };
+
+//Debug functions
+template <typename T> void print2DArray(T* arr, int rows, int cols);
 
 
 

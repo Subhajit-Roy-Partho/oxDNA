@@ -7,7 +7,7 @@
 class PSP2Particle: public BaseParticle{
 public:
     std::vector<int> iS,iP;
-    virtual void add_neighbour(BaseParticle *n, number &array,number bfact, number ro, LR_vector pos);
+    virtual void add_neighbour(BaseParticle *n);
 };
 
 

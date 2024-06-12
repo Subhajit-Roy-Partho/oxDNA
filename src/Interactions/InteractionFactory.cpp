@@ -39,6 +39,7 @@
 // #include "CGDNAInteraction.h"
 #include "PHBInteraction.h"
 // #include "PSPInteraction.h"
+#include "PSP2Interaction.h"
 
 
 InteractionPtr InteractionFactory::make_interaction(input_file &inp) {
@@ -89,6 +90,7 @@ InteractionPtr InteractionFactory::make_interaction(input_file &inp) {
 	else if(inter_type.compare("RNACT") == 0) return std::make_shared<RNANMInteraction>(true);
 	else if(inter_type.compare("PHB") == 0) return std::make_shared<PHBInteraction>();
 	// else if(inter_type.compare("PSP") == 0) return std::make_shared<PSPInteraction>();
+	else if(inter_type.compare("PSP2") == 0) return std::make_shared<PSP2Interaction>();
 
 	else {
 		InteractionPtr res = PluginManager::instance()->get_interaction(inter_type);
