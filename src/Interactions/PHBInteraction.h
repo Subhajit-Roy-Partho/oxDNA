@@ -10,7 +10,7 @@
 // all gpu essential definitions
 #define GPUmaxiP 500 // maximum patch point for a particle for ico 6 connective points
 #define MAXparticles 5000 // maximum number of particles
-#define MAXneighbour 3 // number of bonded neighbout one particle is connected to 
+#define MAXneighbour 15 // number of bonded neighbout one particle is connected to 
 #define GPUmaxiC 500 // unique patchy configuration max iC number.
 #define MaxPatches 24 // maximum number of patches
 
@@ -32,7 +32,7 @@ public:
     number rmod,rnorm;
     number damp=0;
     number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyEpsilon=2.0f,patchyLockCutOff=-0.1,patchyInteractionDistanceCutoff=0,patchyB=667.505671539,patchyRcut=1.2,patchyCutOff=1.5,patchyAlpha=0.12,patchyIntercept=0.0,patchySpacer=0.0; // patchyCutoff=1.8
-    number patchyRcut2=SQR(patchyRcut),patchyPowAlpha = powf(patchyAlpha, (number) 10.f),patchEcut=0,patchyCutOff2=SQR(patchyCutOff);
+    number patchyRcut2=SQR(patchyRcut),patchyPowAlpha = powf(patchyAlpha, (number) 10.f), invPatchyPowAlpha=1/patchyPowAlpha,patchEcut=0,patchyCutOff2=SQR(patchyCutOff),invPatchyApha2=1/SQR(patchyAlpha);
     number tepEpsilon=1.0f,tepB=1,_xu_bending=0.952319757,_xk_bending= 1.14813301,tepFeneDelta=1.6; //currently not used
     number tepFeneDelta2=SQR(tepFeneDelta);
     number _ka = 100.,_kb = 21.,_kt = 29.7; //Energies

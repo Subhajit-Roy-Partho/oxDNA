@@ -80,3 +80,4 @@ select_compute_arch_laptop.cmake
 **/trajectory*.dat
 *.mgl
 out*.txt
+subho/PHB/error_conf.dat

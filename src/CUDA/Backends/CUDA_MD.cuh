@@ -23,7 +23,7 @@ __device__ GPU_quat _get_updated_orientation(c_number4 &L, GPU_quat &old_o) {
 	return quat_multiply(old_o, R);
 }
 
-__global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) {
+__global__ void first_step(float *invmass,float *invmr2,c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) {
 	if(IND >= MD_N[0]) return;
 
 	const c_number4 F = forces[IND];
@@ -31,9 +31,9 @@ __global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *l
 	c_number4 r = poss[IND];
 	c_number4 v = vels[IND];
 
-	v.x += F.x * (MD_dt[0] * (c_number) 0.5f);
-	v.y += F.y * (MD_dt[0] * (c_number) 0.5f);
-	v.z += F.z * (MD_dt[0] * (c_number) 0.5f);
+	v.x += F.x * (MD_dt[0] * (c_number) 0.5f*invmass[IND]); //subho
+	v.y += F.y * (MD_dt[0] * (c_number) 0.5f*invmass[IND]); //subho
+	v.z += F.z * (MD_dt[0] * (c_number) 0.5f*invmass[IND]); //subho
 
 	r.x += v.x * MD_dt[0];
 	r.y += v.y * MD_dt[0];
@@ -45,9 +45,9 @@ __global__ void first_step(c_number4 *poss, GPU_quat *orientations, c_number4 *l
 	const c_number4 T = torques[IND];
 	c_number4 L = Ls[IND];
 
-	L.x += T.x * (MD_dt[0] * (c_number) 0.5f);
-	L.y += T.y * (MD_dt[0] * (c_number) 0.5f);
-	L.z += T.z * (MD_dt[0] * (c_number) 0.5f);
+	L.x += T.x * (MD_dt[0] * (c_number) 0.5f*invmr2[IND]); //subho
+	L.y += T.y * (MD_dt[0] * (c_number) 0.5f*invmr2[IND]); //subho
+	L.z += T.z * (MD_dt[0] * (c_number) 0.5f*invmr2[IND]); //subho
 
 	Ls[IND] = L;
 
@@ -470,15 +470,15 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 	torques[IND] = T;
 }
 
-__global__ void second_step(c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques) {
+__global__ void second_step(float *invmass,float *invmr2,c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques) {
 	if(IND >= MD_N[0]) return;
 
 	c_number4 F = forces[IND];
 	c_number4 v = vels[IND];
 
-	v.x += F.x * MD_dt[0] * (c_number) 0.5f;
-	v.y += F.y * MD_dt[0] * (c_number) 0.5f;
-	v.z += F.z * MD_dt[0] * (c_number) 0.5f;
+	v.x += F.x * MD_dt[0] * (c_number) 0.5f*invmass[IND]; //subho
+	v.y += F.y * MD_dt[0] * (c_number) 0.5f*invmass[IND]; //subho
+	v.z += F.z * MD_dt[0] * (c_number) 0.5f*invmass[IND]; //subho
 	v.w = (v.x*v.x + v.y*v.y + v.z*v.z) * (c_number) 0.5f;
 
 	vels[IND] = v;
@@ -486,9 +486,9 @@ __global__ void second_step(c_number4 *vels, c_number4 *Ls, c_number4 *forces, c
 	c_number4 T = torques[IND];
 	c_number4 L = Ls[IND];
 
-	L.x += T.x * MD_dt[0] * (c_number) 0.5f;
-	L.y += T.y * MD_dt[0] * (c_number) 0.5f;
-	L.z += T.z * MD_dt[0] * (c_number) 0.5f;
+	L.x += T.x * MD_dt[0] * (c_number) 0.5f*invmr2[IND]; //subho
+	L.y += T.y * MD_dt[0] * (c_number) 0.5f*invmr2[IND]; //subho
+	L.z += T.z * MD_dt[0] * (c_number) 0.5f*invmr2[IND]; //subho
 	L.w = (L.x*L.x + L.y*L.y + L.z*L.z) * (c_number) 0.5f;
 
 	Ls[IND] = L;

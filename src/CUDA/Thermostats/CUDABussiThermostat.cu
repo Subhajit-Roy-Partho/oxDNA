@@ -52,20 +52,22 @@ struct compute_K_without_com {
 };
 
 
-__global__ void bussi_thermostat(c_number4 *vels, c_number4 *Ls, c_number4 v_com, c_number rescale_factor_t, c_number rescale_factor_r, int N) {
+__global__ void bussi_thermostat(c_number *invmass,c_number *invmr2,c_number4 *vels, c_number4 *Ls, c_number4 v_com, c_number rescale_factor_t, c_number rescale_factor_r, int N) {
 	if(IND >= N) return;
 
 	c_number4 v = vels[IND];
-	v.x = (v.x - v_com.x) * rescale_factor_t + v_com.x;
-	v.y = (v.y - v_com.y) * rescale_factor_t + v_com.y;
-	v.z = (v.z - v_com.z) * rescale_factor_t + v_com.z;
+	c_number vfactor = sqrtf(invmass[IND]);
+	c_number Lfactor = sqrtf(invmr2[IND]);
+	v.x = (v.x - v_com.x) * rescale_factor_t*vfactor + v_com.x;
+	v.y = (v.y - v_com.y) * rescale_factor_t*vfactor + v_com.y;
+	v.z = (v.z - v_com.z) * rescale_factor_t*vfactor + v_com.z;
 	v.w = (v.x * v.x + v.y * v.y + v.z * v.z) * (c_number) 0.5f;
 	vels[IND] = v;
 
 	c_number4 L = Ls[IND];
-	L.x *= rescale_factor_r;
-	L.y *= rescale_factor_r;
-	L.z *= rescale_factor_r;
+	L.x *= rescale_factor_r* Lfactor;
+	L.y *= rescale_factor_r* Lfactor;
+	L.z *= rescale_factor_r* Lfactor;
 	L.w = (L.x * L.x + L.y * L.y + L.z * L.z) * (c_number) 0.5f;
 	Ls[IND] = L;
 }
@@ -95,7 +97,7 @@ bool CUDABussiThermostat::would_activate(llint curr_step) {
 	return (curr_step % _newtonian_steps == 0);
 }
 
-void CUDABussiThermostat::apply_cuda(c_number4 *d_poss, GPU_quat *d_orientations, c_number4 *d_vels, c_number4 *d_Ls, llint curr_step) {
+void CUDABussiThermostat::apply_cuda(c_number *d_invmass, c_number *d_invmr2,c_number4 *d_poss, GPU_quat *d_orientations, c_number4 *d_vels, c_number4 *d_Ls, llint curr_step) {
 	if(!would_activate(curr_step)) return;
 
 	int N = CONFIG_INFO->N();
@@ -118,5 +120,5 @@ void CUDABussiThermostat::apply_cuda(c_number4 *d_poss, GPU_quat *d_orientations
 
 	bussi_thermostat
 		<<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>>
-		(d_vels, d_Ls, v_com, rescale_factor_t, rescale_factor_r, N);
+		(d_invmass,d_invmr2,d_vels, d_Ls, v_com, rescale_factor_t, rescale_factor_r, N);
 }

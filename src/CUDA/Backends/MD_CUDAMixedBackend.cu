@@ -82,7 +82,7 @@ void CUDAMixedBackend::_quat_double_to_quat_float(GPU_quat_double *src, GPU_quat
 void CUDAMixedBackend::_first_step() {
 	first_step_mixed
 		<<<_particles_kernel_cfg.blocks, _particles_kernel_cfg.threads_per_block>>>
-		(_d_poss, _d_orientations, _d_possd, _d_orientationsd, _d_list_poss, _d_velsd, _d_Lsd, _d_forces, _d_torques, _d_are_lists_old, this->_any_rigid_body);
+		(_d_invmass,_d_invmr2,_d_poss, _d_orientations, _d_possd, _d_orientationsd, _d_list_poss, _d_velsd, _d_Lsd, _d_forces, _d_torques, _d_are_lists_old, this->_any_rigid_body);
 }
 
 void CUDAMixedBackend::_rescale_positions(float4 new_Ls, float4 old_Ls) {
@@ -108,7 +108,7 @@ void CUDAMixedBackend::_forces_second_step() {
 
 	second_step_mixed
 		<<<_particles_kernel_cfg.blocks, _particles_kernel_cfg.threads_per_block>>>
-		(_d_velsd, _d_Lsd, _d_forces, _d_torques, this->_any_rigid_body);
+		(_d_invmass,_d_invmr2,_d_velsd, _d_Lsd, _d_forces, _d_torques, this->_any_rigid_body);
 	CUT_CHECK_ERROR("second_step_mixed");
 }
 

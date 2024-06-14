@@ -20,7 +20,7 @@ __device__ GPU_quat_double _get_updated_orientation(LR_double4 &L, GPU_quat_doub
 	return quat_multiply(old_o, R);
 }
 
-__global__ void first_step_mixed(float4 __restrict__ *poss, GPU_quat __restrict__ *orientations, LR_double4 __restrict__ *possd,
+__global__ void first_step_mixed(float *invmass,float *invmr2,float4 __restrict__ *poss, GPU_quat __restrict__ *orientations, LR_double4 __restrict__ *possd,
 		GPU_quat_double __restrict__ *orientationsd, const float4 __restrict__ *list_poss, LR_double4 __restrict__ *velsd,
 		LR_double4 __restrict__ *Lsd, const float4 __restrict__ *forces, const float4 __restrict__ *torques,
 		bool *are_lists_old, bool any_rigid_body) {
@@ -30,9 +30,9 @@ __global__ void first_step_mixed(float4 __restrict__ *poss, GPU_quat __restrict_
 
 	LR_double4 v = velsd[IND];
 
-	v.x += F.x * MD_dt[0] * 0.5f;
-	v.y += F.y * MD_dt[0] * 0.5f;
-	v.z += F.z * MD_dt[0] * 0.5f;
+	v.x += F.x * MD_dt[0] * 0.5f*invmass[IND]; //subho
+	v.y += F.y * MD_dt[0] * 0.5f*invmass[IND]; //subho
+	v.z += F.z * MD_dt[0] * 0.5f*invmass[IND]; //subho
 
 	velsd[IND] = v;
 
@@ -51,9 +51,9 @@ __global__ void first_step_mixed(float4 __restrict__ *poss, GPU_quat __restrict_
 		float4 T = torques[IND];
 		LR_double4 L = Lsd[IND];
 		
-		L.x += T.x * MD_dt[0] * 0.5f;
-		L.y += T.y * MD_dt[0] * 0.5f;
-		L.z += T.z * MD_dt[0] * 0.5f;
+		L.x += T.x * MD_dt[0] * 0.5f*invmr2[IND]; //subho
+		L.y += T.y * MD_dt[0] * 0.5f*invmr2[IND]; //subho
+		L.z += T.z * MD_dt[0] * 0.5f*invmr2[IND]; //subho
 		
 		Lsd[IND] = L;
 		
@@ -68,15 +68,15 @@ __global__ void first_step_mixed(float4 __restrict__ *poss, GPU_quat __restrict_
 	if(quad_distance(rf, list_poss[IND]) > MD_sqr_verlet_skin[0]) are_lists_old[0] = true;
 }
 
-__global__ void second_step_mixed(LR_double4 *velsd, LR_double4 *Lsd, float4 *forces, float4 *torques, bool any_rigid_body) {
+__global__ void second_step_mixed(float *invmass, float *invmr2,LR_double4 *velsd, LR_double4 *Lsd, float4 *forces, float4 *torques, bool any_rigid_body) {
 	if(IND >= MD_N[0]) return;
 
 	float4 F = forces[IND];
 	LR_double4 v = velsd[IND];
 
-	v.x += (F.x * MD_dt[0] * 0.5f);
-	v.y += (F.y * MD_dt[0] * 0.5f);
-	v.z += (F.z * MD_dt[0] * 0.5f);
+	v.x += (F.x * MD_dt[0] * 0.5f*invmass[IND]); //subho
+	v.y += (F.y * MD_dt[0] * 0.5f*invmass[IND]); //subho
+	v.z += (F.z * MD_dt[0] * 0.5f*invmass[IND]); //subho
 
 	velsd[IND] = v;
 
@@ -84,9 +84,9 @@ __global__ void second_step_mixed(LR_double4 *velsd, LR_double4 *Lsd, float4 *fo
 		float4 T = torques[IND];
 		LR_double4 L = Lsd[IND];
 		
-		L.x += (T.x * MD_dt[0] * 0.5f);
-		L.y += (T.y * MD_dt[0] * 0.5f);
-		L.z += (T.z * MD_dt[0] * 0.5f);
+		L.x += (T.x * MD_dt[0] * 0.5f*invmr2[IND]); //subho
+		L.y += (T.y * MD_dt[0] * 0.5f*invmr2[IND]); //subho
+		L.z += (T.z * MD_dt[0] * 0.5f*invmr2[IND]); //subho
 		
 		Lsd[IND] = L;
 	}

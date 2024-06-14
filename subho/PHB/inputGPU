@@ -6,7 +6,7 @@ backend_precision = mixed
 CUDA_list = verlet
 CUDA_device=0
 #CUDA_sort_every = 0
-use_edge = 1
+use_edge = 0
 debug = true
 seed = 1
 interaction_type = PHB
@@ -28,7 +28,7 @@ edge_n_forces = 1
 dt = 0.001
 newtonian_steps=51
 diff_coeff=1
-thermostat=no
+thermostat=brownian
 refresh_vel=1
 
 ### MC PARAMS ###
@@ -50,8 +50,8 @@ ensemble = NVT
 
 ##############################
 #parfile = replica.par
-topology = helix.phb
-conf_file = helix5.dat
+topology = helix2.phb
+conf_file = helix2.dat
 trajectory_file = trajectory.dat
 lastconf_file=last_conf.ign
 log_file = log.ign

@@ -40,6 +40,8 @@ protected:
 	c_number4 *_d_Ls, *_h_Ls;
 	c_number4 *_d_forces, *_h_forces;
 	c_number4 *_d_torques, *_h_torques;
+	c_number *_d_invmass, *_h_invmass; //holds the inverse of the mass //subho
+	c_number *_d_invmr2, *_h_invmr2; // holds inverse angular momentum //subho
 
 	std::vector<int> _h_particles_to_mols;
 	int *_d_particles_to_mols, *_d_mol_sizes, *_d_buff_particles_to_mols;

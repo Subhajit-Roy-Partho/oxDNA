@@ -741,11 +741,11 @@ number PHBInteraction::patchy_interaction_notorsion(PHBParticle *p, PHBParticle 
 				LR_vector patch_dist = _computed_r + qpatch - ppatch;
 				// patch_dist += patch_dist*patchyIntercept/patch_dist.norm();
 				number dist = patch_dist.norm();
-				if(dist < patchyCutOff2){
+				if(dist < patchyRcut2){
 					c++;
                     // number energy_ij = 0;
 
-				    number r8b10 = dist*dist*dist*dist / patchyPowAlpha;
+				    number r8b10 = dist*dist*dist*dist *invPatchyPowAlpha;
 				    number exp_part = -1* exp(-1.f*r8b10 * dist)*K;
                     energy +=exp_part;
 

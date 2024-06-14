@@ -28,6 +28,7 @@ MD_CUDABackend::MD_CUDABackend() :
 	_use_edge = false;
 	_any_rigid_body = false;
 
+	_d_invmass=_d_invmr2= _h_invmass=_h_invmr2= nullptr;
 	_d_vels = _d_Ls = _d_forces = _d_torques = _d_buff_vels = nullptr;
 	_h_vels = _h_Ls = _h_forces = _h_torques = _d_buff_Ls = nullptr;
 	_h_gpu_index = _h_cpu_index = nullptr;
@@ -95,6 +96,15 @@ MD_CUDABackend::~MD_CUDABackend() {
 	if(_obs_output_error_conf != nullptr) {
 		delete _obs_output_error_conf;
 	}
+
+	if(_d_invmass != nullptr) {
+		CUDA_SAFE_CALL(cudaFree(_d_invmass));
+		CUDA_SAFE_CALL(cudaFree(_d_invmr2));
+	}
+	if(_h_invmass != nullptr) {
+		delete[] _h_invmass;
+		delete[] _h_invmr2;
+	}
 }
 
 void MD_CUDABackend::_host_to_gpu() {
@@ -102,6 +112,8 @@ void MD_CUDABackend::_host_to_gpu() {
 	CUDA_SAFE_CALL(cudaMemcpy(_d_particles_to_mols, _h_particles_to_mols.data(), sizeof(int) * N(), cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(_d_vels, _h_vels, _vec_size, cudaMemcpyHostToDevice));
 	CUDA_SAFE_CALL(cudaMemcpy(_d_Ls, _h_Ls, _vec_size, cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpy(_d_invmass, _h_invmass, _particles.size() * sizeof(c_number), cudaMemcpyHostToDevice));
+	CUDA_SAFE_CALL(cudaMemcpy(_d_invmr2, _h_invmr2, _particles.size() * sizeof(c_number), cudaMemcpyHostToDevice));
 }
 
 void MD_CUDABackend::_gpu_to_host() {
@@ -203,7 +215,7 @@ void MD_CUDABackend::_apply_external_forces_changes() {
 					LTCOMTrap *p_force = (LTCOMTrap *) p->ext_forces[j];
 					init_LTCOMTrap_from_CPU(&cuda_force->ltcomtrap, p_force, first_time);
 				}
-				else if(force_type == typeid(YukawaSphere)) {
+                else if(force_type == typeid(YukawaSphere)) {
 					YukawaSphere *p_force = (YukawaSphere *) p->ext_forces[j];
 					init_YukawaSphere_from_CPU(&cuda_force->yukawasphere, p_force);
 				}
@@ -228,6 +240,11 @@ void MD_CUDABackend::apply_changes_to_simulation_data() {
 		_h_poss[i].x = p->pos.x;
 		_h_poss[i].y = p->pos.y;
 		_h_poss[i].z = p->pos.z;
+
+		_h_invmass[i] =p->invmass;
+		_h_invmr2[i] = p->invmr2;
+
+		// std::cout<<"Index = "<<i<<"  Mass = "<<1.f/p->invmass<<"  MR2 = "<<1.f/p->invmr2<<std::endl; //Debug //working
 
 		_h_particles_to_mols[i] = p->strand_id;
 
@@ -396,7 +413,7 @@ void MD_CUDABackend::_init_CUDA_MD_symbols() {
 void MD_CUDABackend::_first_step() {
 	first_step
 		<<<_particles_kernel_cfg.blocks, _particles_kernel_cfg.threads_per_block>>>
-		(_d_poss, _d_orientations, _d_list_poss, _d_vels, _d_Ls, _d_forces, _d_torques, _d_are_lists_old);
+		(_d_invmass,_d_invmr2, _d_poss, _d_orientations, _d_list_poss, _d_vels, _d_Ls, _d_forces, _d_torques, _d_are_lists_old);
 	CUT_CHECK_ERROR("_first_step error");
 }
 
@@ -502,7 +519,7 @@ void MD_CUDABackend::_apply_barostat() {
 
 	if(_cuda_barostat_always_refresh) {
 		// if the user wishes so, we refresh all the velocities after each barostat attempt
-		_cuda_barostat_thermostat->apply_cuda(_d_poss, _d_orientations, _d_vels, _d_Ls, current_step());
+		_cuda_barostat_thermostat->apply_cuda(_d_invmass,_d_invmr2,_d_poss, _d_orientations, _d_vels, _d_Ls, current_step());
 	}
 }
 
@@ -512,7 +529,7 @@ void MD_CUDABackend::_forces_second_step() {
 
 	second_step
 		<<<_particles_kernel_cfg.blocks, _particles_kernel_cfg.threads_per_block>>>
-		(_d_vels, _d_Ls, _d_forces, _d_torques);
+		(_d_invmass,_d_invmr2,_d_vels, _d_Ls, _d_forces, _d_torques);
 	CUT_CHECK_ERROR("second_step");
 }
 
@@ -541,7 +558,7 @@ void MD_CUDABackend::_sort_particles() {
 }
 
 void MD_CUDABackend::_thermalize() {
-	_cuda_thermostat->apply_cuda(_d_poss, _d_orientations, _d_vels, _d_Ls, current_step());
+	_cuda_thermostat->apply_cuda(_d_invmass,_d_invmr2,_d_poss, _d_orientations, _d_vels, _d_Ls, current_step());
 }
 
 void MD_CUDABackend::_update_stress_tensor() {
@@ -668,6 +685,9 @@ void MD_CUDABackend::init() {
 	CUDA_SAFE_CALL(GpuUtils::LR_cudaMalloc<int>(&_d_particles_to_mols, sizeof(int) * N()));
 	CUDA_SAFE_CALL(GpuUtils::LR_cudaMalloc<int>(&_d_mol_sizes, sizeof(int) * _molecules.size()));
 	CUDA_SAFE_CALL(GpuUtils::LR_cudaMalloc<c_number4>(&_d_molecular_coms, sizeof(c_number4) * _molecules.size()));
+    CUDA_SAFE_CALL(GpuUtils::LR_cudaMalloc<c_number>(&_d_invmass, sizeof(c_number) * N()));
+	CUDA_SAFE_CALL(GpuUtils::LR_cudaMalloc<c_number>(&_d_invmr2, sizeof(c_number) * N()));
+
 
 	CUDA_SAFE_CALL(cudaMemset(_d_forces, 0, _vec_size));
 	CUDA_SAFE_CALL(cudaMemset(_d_torques, 0, _vec_size));
@@ -677,6 +697,8 @@ void MD_CUDABackend::init() {
 	_h_Ls = new c_number4[N()];
 	_h_forces = new c_number4[N()];
 	_h_torques = new c_number4[N()];
+	_h_invmass = new c_number[N()];
+	_h_invmr2 = new c_number[N()];
 
 	_obs_output_error_conf->init();
 
