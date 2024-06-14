@@ -56,8 +56,9 @@ void PSP2Interaction::read_topology(int *N_strands, std::vector<BaseParticle *> 
         if(i>=particleNum) throw oxDNAException("Topology file has more particles than specified in the header");
         std::istringstream body(line);
         // int j=0;
-        body>>particles[i]->type>>particleStrand[i]>>particleRadius[i];
+        body>>particles[i]->type>>particleStrand[i]>>particleRadius[i]>>particles[i]->mass;
         auto *pp = dynamic_cast<PSP2Particle *>(particles[i]);
+        pp->strand_id = particleStrand[i];
         body>>ParticlePatches[i][0];
         for(int p=0;p<ParticlePatches[i][0];p++){
             body>>ParticlePatches[i][p+1];
@@ -70,12 +71,24 @@ void PSP2Interaction::read_topology(int *N_strands, std::vector<BaseParticle *> 
             t++;
         }
         connections[i][0]=t;
+        // for(int l=0;l< pp->neighbours.size();l++){
+        //    std::cout<<pp->index<<" "<<pp->neighbours[l]<<"\t";
+        // }
+        // std::cout<<"\n";
         i++;
     }
 
+    _rcut=12;
+    _sqr_rcut = SQR(_rcut);
+
+    populateInvSprings();
+
+
+    // Debug Printout
+
     // for(i=0;i<particleNum;i++){
     //     for(int j=0;j<connections[i][0];j++){
-    //         std::cout<<connections[i][j+1]<<" "<<ParticleSprings[i][j]<<"\t";
+    //         std::cout<<connections[i][j+1]<<" "<<ParticleSprings[i][j]<<" "<<invParticleSprings[i][j]<<"\t";
     //     }
     //     std::cout<<"\n";
     // };
@@ -108,6 +121,12 @@ void PSP2Interaction::read_topology(int *N_strands, std::vector<BaseParticle *> 
     // std::cout<<bonded(particles[0],particles[1])<<"\n";
     // std::cout<<bonded(particles[0],particles[2])<<"\n";
     // std::cout<<bonded(particles[2],particles[3])<<"\n";
+
+    // number k,r0;
+    // LR_vector rp,rq;
+    // int next=returnKro(0,1,&k,&r0,&rp,&rq);
+    // std::cout<<k<<"\t"<<r0<<"\t rp = "<<rp.x<<" "<<rp.y<<" "<<rp.z<<"\t rq = "<<rq.x<<" "<<rq.y<<" "<<rq.z<<"\n";
+    
 }
 
 void PSP2Interaction::check_input_sanity(std::vector<BaseParticle *> &particles) {
@@ -129,9 +148,12 @@ number PSP2Interaction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q
 }
 
 number PSP2Interaction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
+    number energy = 0;
+    if(p->strand_id==q->strand_id) return energy;
+    // std::cout<<"called"<<std::endl;
     if(compute_r) _computed_r = _box->min_image(p->pos, q->pos);
-    number energy = exeVol(p,q,compute_r,update_forces);
-    energy+=simplePatch(p,q,compute_r,update_forces);
+    // energy += exeVol(p,q,compute_r,update_forces);
+    // energy+=simplePatch(p,q,compute_r,update_forces);
     return energy;
 }
 
@@ -182,15 +204,67 @@ number PSP2Interaction::exeVol(BaseParticle *p, BaseParticle *q, bool compute_r,
 //Simple Patch
 
 number PSP2Interaction::simplePatch(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
-    return 0;
+    number energy =0;
+    rmod = _computed_r.module();
+    if(rmod-(particleRadius[p->index]+particleRadius[q->index])>patchyRcut) return 0;
+    if(ParticlePatches[q->index]==0) return 0;
+    for(int pi=0;pi<ParticlePatches[p->index][0];pi++){
+        LR_vector ppatch= p->orientation*returnPatch(p->index,pi);
+        for(int qi=0;qi<ParticlePatches[q->index][0];qi++){
+            if(Patches[ParticlePatches[p->index][pi+1]][0]+Patches[ParticlePatches[q->index][qi+1]][0]!=0) continue; //color check
+            LR_vector qpatch= q->orientation*returnPatch(q->index,qi);
+            LR_vector r = _computed_r - ppatch + qpatch;
+            number dist = r.norm();
+            if(dist<patchyRcut2){
+                number K = Patches[ParticlePatches[p->index][pi+1]][1]+Patches[ParticlePatches[q->index][qi+1]][1]; //total strength
+                number r2b2=dist*patchyAlphaB2;
+                number r8b10 = r2b2*r2b2*r2b2*r2b2*patchyAlphaB2;
+                number exp_part = -1.f*exp(-1.f*r8b10*dist)*K;
+                if(update_forces){
+                    LR_vector force = r*(10*exp_part*r8b10);
+                    p->force-=force;
+                    q->force+=force;
+                    p->torque -= p->orientationT*ppatch.cross(force);
+                    q->torque += q->orientationT*qpatch.cross(force);
+                }
+            }
+        }
+    }
+
+    return energy;
 }
 
 //Spring Function
 
 number PSP2Interaction::torqueSpring(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
-    // for(int i=0;i<)
-    LR_vector intCenter = p->orientation*p->pos;
-    return 0;
+    number energy =0;
+    for(int i=0;i<maxSprings;i++){
+        number k,r0;
+        LR_vector SpringP,SpringQ;
+        int next;
+        if(i==0){
+            next=returnKro(p->index,q->index,&k,&r0,&SpringP,&SpringQ);
+            // std::cout<<"p = "<<p->index<<"q = "<<q->index<<"\t"<<next<<"\n";
+        }else{
+            next=returnKro(p->index,q->index,&k,&r0,&SpringP,&SpringQ,next);
+        }
+        LR_vector intCenterP = p->orientation*SpringP;
+        LR_vector intCenterQ = q->orientation*SpringQ; //Here
+        LR_vector r = _computed_r - intCenterP + intCenterQ;
+        number modr = r.module();
+        number dist = modr - r0;
+        energy += 0.25*k*SQR(dist);
+
+        if(update_forces){
+            LR_vector force = -k*dist*(r/modr);
+            p->force-=force;
+            q->force+=force;
+
+            p->torque -= p->orientationT*intCenterP.cross(force);
+            q->torque += q->orientationT*intCenterQ.cross(force);
+        }
+    }
+    return energy;
 }
 
 //Common Functions
@@ -200,4 +274,49 @@ bool PSP2Interaction::bonded(BaseParticle *p, BaseParticle *q) {
         if(connections[p->index][i+1]==q->index) return true;
     }
     return false;
+}
+
+int PSP2Interaction::returnKro(int p, int q, number *k, number *r0, LR_vector *rp,LR_vector *rq) {
+    
+    for(int i=0;i<connections[p][0];i++){
+        if(connections[p][i+1]==q){
+            *k = Springs[ParticleSprings[p][i]][0];
+            *r0 = Springs[ParticleSprings[p][i]][1];
+            *rp = (LR_vector){Springs[ParticleSprings[p][i]][2],Springs[ParticleSprings[p][i]][3],Springs[ParticleSprings[p][i]][4]};
+            *rq = (LR_vector){Springs[invParticleSprings[p][i]][2],Springs[invParticleSprings[p][i]][3],Springs[invParticleSprings[p][i]][4]};
+            return i+1;
+        }
+    }
+    return -1;
+}
+
+int PSP2Interaction::returnKro(int p, int q, number *k, number *r0, LR_vector *rp, LR_vector *rq, int next) {
+    if(connections[p][next+1]==q){
+        *k = Springs[ParticleSprings[p][next]][0];
+        *r0 = Springs[ParticleSprings[p][next]][1];
+        *rp = (LR_vector){Springs[ParticleSprings[p][next]][2],Springs[ParticleSprings[p][next]][3],Springs[ParticleSprings[p][next]][4]};
+        *rq = (LR_vector){Springs[invParticleSprings[p][next]][2],Springs[invParticleSprings[p][next]][3],Springs[invParticleSprings[p][next]][4]};
+        return next+1;
+    }
+    return -1;
+}
+
+LR_vector PSP2Interaction::returnPatch(int p,int i) {
+    return (LR_vector){Patches[ParticlePatches[p][i+1]][2],Patches[ParticlePatches[p][i+1]][3],Patches[ParticlePatches[p][i+1]][4]};
+}
+
+//Extra Topology Functions
+
+void PSP2Interaction::populateInvSprings() {
+    for(int p=0;p<particleNum;p++){
+        for(int j=0;j<connections[p][0];j++){
+            int q = connections[p][j+1];
+            for(int i=0;i<connections[q][0];i++){
+                if(connections[q][i+1]==p){
+                    invParticleSprings[p][j]=ParticleSprings[q][i];
+                    break;
+                }
+            }
+        }
+    }
 }

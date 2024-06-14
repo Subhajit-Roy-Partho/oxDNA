@@ -21,15 +21,16 @@ protected:
 public:
 	number rnorm, rmod;
     int particleNum,strands,maxPatches,maxSprings; // header
-	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyCutOff=1.5,patchyAlpha=0.12;
-
+	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12;
+	number patchyRcut2 = SQR(patchyRcut), patchyAlphaB2 = 1/SQR(patchyAlpha);
 	number particleRadius[MAXparticles];
 	int particleStrand[MAXparticles];
 	number Patches[MAXPatches][5]; // color,strength,x,y,z
 	number Springs[MAXSprings][5]; // k, ro , x,y,z
 	int ParticlePatches[MAXparticles][MAXPatchPerParticle+1];
-	int ParticleSprings[MAXparticles][MAXSpringPerParticle];
 	int connections[MAXparticles][MAXneighbour+1];
+	int ParticleSprings[MAXparticles][MAXSpringPerParticle];
+	int invParticleSprings[MAXparticles][MAXSpringPerParticle];
 
 
 
@@ -68,8 +69,13 @@ public:
 
 	//Common Functions
 	bool bonded(BaseParticle *p, BaseParticle *q);
+	int returnKro(int p, int q, number *k, number *r0, LR_vector *rp, LR_vector *rq);
+	int returnKro(int p, int q, number *k, number *r0, LR_vector *rp, LR_vector *rq, int next);
+	LR_vector returnPatch(int p,int i); 
+	// Extra Topology Functions
 
-	
+	void populateInvSprings();
+		
 };
 
 //Debug functions

@@ -1,5 +1,5 @@
 4 2 1 1
-# Header = Number of particles, strands, max number of patches per particle, max number of springs per particle
+# Header = Number of particles, strands, max number of patches per particle, repeated springs per particle
 
 # iP = iP, color, strength,pos x y z  ### Patch info
 
@@ -7,13 +7,13 @@ iP 0 -21 1 0 10 0
 
 # iS = iS, k, r0, pos x, y , z  #### Spring info
 
-iS 0 12 15 10 0 0
-iS 1 12 15 -10 0 0
+iS 0 12 1 10 0 0
+iS 1 12 1 -10 0 0
 
-# Body = particleType, strand,radius,NumPatches iP ...... ,iS .......
+# Body = particleType, strand,radius,mass,NumPatches iP ...... ,iS .......
 # Color 100 is blank color, Neighbour -1 is blank
 
--5 0 10 1 0 1 0
--5 0 10 1 0 0 1 2 0
--5 0 10 1 0 1 1
--5 1 10 0
+-5 0 10 1 1 0 1 0
+-5 0 10 1 1 0 0 1 2 0
+-5 0 10 1 1 0 1 1
+-5 1 10 1 0

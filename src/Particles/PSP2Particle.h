@@ -6,8 +6,9 @@
 
 class PSP2Particle: public BaseParticle{
 public:
-    std::vector<int> iS,iP;
+    std::vector<int> iS,iP,neighbours;
     virtual void add_neighbour(BaseParticle *n);
+    virtual bool has_bond(BaseParticle *p);
 };
 
 

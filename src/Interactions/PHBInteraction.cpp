@@ -743,16 +743,16 @@ number PHBInteraction::patchy_interaction_notorsion(PHBParticle *p, PHBParticle 
 				number dist = patch_dist.norm();
 				if(dist < patchyCutOff2){
 					c++;
-                    number energy_ij = 0;
+                    // number energy_ij = 0;
 
 				    number r8b10 = dist*dist*dist*dist / patchyPowAlpha;
 				    number exp_part = -1* exp(-1.f*r8b10 * dist)*K;
                     energy +=exp_part;
 
 					if(update_forces){
-						if (energy_ij <patchyLockCutOff){
-							q->patches[qi].set_lock(p->index,pi,energy_ij);
-							p->patches[pi].set_lock(q->index,qi,energy_ij);
+						if (exp_part <patchyLockCutOff){
+							q->patches[qi].set_lock(p->index,pi,exp_part);
+							p->patches[pi].set_lock(q->index,qi,exp_part);
 						}else{
 							q->patches[qi].unlock();
 							p->patches[pi].unlock();
