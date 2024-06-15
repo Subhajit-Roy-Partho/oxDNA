@@ -152,8 +152,8 @@ number PSP2Interaction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle
     if(p->strand_id==q->strand_id) return energy;
     // std::cout<<"called"<<std::endl;
     if(compute_r) _computed_r = _box->min_image(p->pos, q->pos);
-    // energy += exeVol(p,q,compute_r,update_forces);
-    // energy+=simplePatch(p,q,compute_r,update_forces);
+    energy += exeVol(p,q,compute_r,update_forces);
+    energy+=simplePatch(p,q,compute_r,update_forces);
     return energy;
 }
 
@@ -207,7 +207,7 @@ number PSP2Interaction::simplePatch(BaseParticle *p, BaseParticle *q, bool compu
     number energy =0;
     rmod = _computed_r.module();
     if(rmod-(particleRadius[p->index]+particleRadius[q->index])>patchyRcut) return 0;
-    if(ParticlePatches[q->index]==0) return 0;
+    if(ParticlePatches[q->index][0]==0) return 0;
     for(int pi=0;pi<ParticlePatches[p->index][0];pi++){
         LR_vector ppatch= p->orientation*returnPatch(p->index,pi);
         for(int qi=0;qi<ParticlePatches[q->index][0];qi++){
