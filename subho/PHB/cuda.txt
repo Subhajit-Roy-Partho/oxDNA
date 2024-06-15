@@ -1,0 +1,7 @@
+module load cuda-11.7.0-gcc-11.2.0 gcc-11.2.0-gcc-11.2.0 cmake eigen-3.4.0-gcc-11.2.0
+
+export CUDA_MPS_PIPE_DIRECTORY=/tmp/mps-pipe_$SLURM_TASK_PID
+export CUDA_MPS_LOG_DIRECTORY=/tmp/mps-log_$SLURM_TASK_PID
+mkdir -p $CUDA_MPS_PIPE_DIRECTORY
+mkdir -p $CUDA_MPS_LOG_DIRECTORY
+nvidia-cuda-mps-control -d
