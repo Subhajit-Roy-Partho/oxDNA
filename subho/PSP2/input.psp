@@ -4,7 +4,7 @@
 # iP = iP, color, strength,pos x y z  ### Patch info
 
 iP 0 -21 100 0 5 0
-iP 0 21 100 0 -5 0
+iP 1 21 100 0 -5 0
 
 # iS = iS, k, r0, pos x, y , z  #### Spring info
 

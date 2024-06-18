@@ -10,7 +10,7 @@
 #include <cmath>
 
 #define MAXparticles 5 // maximum number of particles
-#define MAXPatches 1
+#define MAXPatches 2
 #define MAXSprings 2
 #define MAXPatchPerParticle 1
 #define MAXSpringPerParticle 12

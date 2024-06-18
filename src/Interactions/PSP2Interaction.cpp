@@ -219,9 +219,9 @@ number PSP2Interaction::simplePatch(BaseParticle *p, BaseParticle *q, bool compu
                 number K = Patches[ParticlePatches[p->index][pi+1]][1]+Patches[ParticlePatches[q->index][qi+1]][1]; //total strength
                 number r2b2=dist*patchyAlphaB2;
                 number r8b10 = r2b2*r2b2*r2b2*r2b2*patchyAlphaB2;
-                number exp_part = -1.f*exp(-1.f*r8b10*dist)*K;
+                energy = -1.f*exp(-1.f*r8b10*dist)*K;
                 if(update_forces){
-                    LR_vector force = r*(10*exp_part*r8b10);
+                    LR_vector force = r*(10*energy*r8b10);
                     p->force-=force;
                     q->force+=force;
                     p->torque -= p->orientationT*ppatch.cross(force);
