@@ -71,8 +71,6 @@ void PHBInteraction::init(){
 	// cout<<"INIT is called"<<endl;
 	number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
     patchEcut = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
-	_rcut=20;
-	_sqr_rcut=sqrt(_rcut);
 };
 void PHBInteraction::allocate_particles(std::vector<BaseParticle *> &particles){
 	particles.resize(totPar);
