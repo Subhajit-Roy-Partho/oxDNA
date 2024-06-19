@@ -227,7 +227,7 @@ __global__ void CUDAparticle(c_number4 *poss, GPU_quat *orientations, c_number4 
         c_number4 r = box->minimum_image(ppos, poss[id]);
         c_number sqr_r = CUDA_DOT(r, r);
         c_number rmod = sqrtf(sqr_r);
-        CUDAspring(r,2.f,10,F,rmod);
+        CUDAspring(r,ro[IND][p],k[IND][p],F,rmod);
         
 
         CUDAbondedDoubleBending(a1,b1,F,T);
