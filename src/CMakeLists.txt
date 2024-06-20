@@ -316,6 +316,7 @@ IF(CUDA)
 		# CUDA/Interactions/CUDADNANMInteraction.cu
 		# CUDA/Interactions/CUDACGDNAInteraction.cu
 		CUDA/Interactions/CUDAPHBInteraction.cu
+		CUDA/Interactions/CUDAPSP2Interaction.cu
 		CUDA/Interactions/CUDALJInteraction.cu
 		CUDA/Interactions/CUDARNAInteraction.cu
 		CUDA/Interactions/CUDAPatchyInteraction.cu
