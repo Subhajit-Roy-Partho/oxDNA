@@ -12,14 +12,8 @@ __device__ float spring[MAXparticles][5];
 __device__ float patch[MAXparticles][5];
 
 
-__device__ void returnKro(int p, int q, c_number &k, c_number &r0, c_number4 &rp, c_number4 &rq){
-    // for(int i=0; i<connection[p][0];i++){
-
-    // }
-}
-
-__device__ void TorqueSpring(int p, int q, c_number4 &r, c_number4 &F, c_number4 &T){
-    c_number4 SpringP,SpringQ;
+__device__ void TorqueSpring(int p, int q,int t,c_number4 &r, c_number4 &F, c_number4 &T){
+    c_number k,r0;
 }
 
 __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
@@ -29,6 +23,13 @@ __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_numb
 	c_number4 ppos = poss[IND];
     c_number4 a1, a2, a3;
     get_vectors_from_quat(orientations[IND], a1, a2, a3);
+
+    for(int p=0;p<connection[IND][0];p++){
+        int id = connection[IND][p+1];
+        c_number4 b1,b2,b3;
+        get_vectors_from_quat(orientations[id], b1, b2, b3);
+        c_number4 r = box->minimum_image(ppos - poss[id]);
+    }
 
     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
     for(int j = 0; j < num_neighs; j++) {
