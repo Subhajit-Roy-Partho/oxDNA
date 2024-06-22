@@ -1,19 +1,29 @@
 #include "CUDAPSP2Interaction.h"
 
 __constant__ int MD_N[1];
+__constant__ float spring[MAXPatches][5];
+__constant__ float patch[MAXSprings][5];
 
 
 __device__ int strand[MAXparticles];
 __device__ int connection[MAXparticles][MAXneighbour+1];
+__device__ int springParticle[MAXparticles][MAXSpringPerParticle];
+__device__ int invSpringParticle[MAXparticles][MAXSpringPerParticle];
+__device__ int patchParticle[MAXparticles][MAXPatchPerParticle];
 
 
 __device__ float radius[MAXparticles];
-__device__ float spring[MAXparticles][5];
-__device__ float patch[MAXparticles][5];
 
 
-__device__ void TorqueSpring(int p, int q,int t,c_number4 &r, c_number4 &F, c_number4 &T){
+__device__ void TorqueSpring(int p, int q,int i,c_number4 &r, c_number4 &F, c_number4 &T){
     c_number k,r0;
+    c_number4 rP,rQ;
+    k= spring[springParticle[p][i]][0];
+    r0 = spring[springParticle[p][i]][1];
+
+    rP.x = spring[springParticle[p][i]][2];
+    rP.y = spring[springParticle[p][i]][3];
+    rP.z = spring[springParticle[p][i]][4];
 }
 
 __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
@@ -28,7 +38,7 @@ __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_numb
         int id = connection[IND][p+1];
         c_number4 b1,b2,b3;
         get_vectors_from_quat(orientations[id], b1, b2, b3);
-        c_number4 r = box->minimum_image(ppos - poss[id]);
+        c_number4 r = box->minimum_image(ppos, poss[id]);
     }
 
     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
@@ -73,8 +83,12 @@ void CUDAPSP2Interaction::cuda_init(int N){
 
     // Floats
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(radius, &particleRadius, sizeof(float)*MAXparticles));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(spring, &Springs, sizeof(float)*MAXparticles*5));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patch, &Patches, sizeof(float)*MAXparticles*5));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(spring, &Springs, sizeof(float)*MAXSprings*5));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patch, &Patches, sizeof(float)*MAXPatches*5));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(springParticle, &ParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(invSpringParticle, &invParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchParticle, &ParticlePatches, sizeof(int)*MAXparticles*MAXPatchPerParticle));
+
 
 }
 
