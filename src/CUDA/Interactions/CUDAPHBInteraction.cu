@@ -377,8 +377,9 @@ void CUDAPHBInteraction::cuda_init(int N){
     // float invAlpha = patchyAlpha*patchyAlpha*patchyAlpha*patchyAlpha*patchyAlpha;
     COPY_NUMBER_TO_FLOAT(invPowAlpha, invPatchyPowAlpha);
     COPY_NUMBER_TO_FLOAT(B2, invPow2);
-    std::cout<<"Patchy Alpha"<<patchyAlpha<<std::endl;
-    std::cout<<"Inverse patchy Alpha square"<<invPow2<<std::endl;
+    // std::cout<<"Patchy Alpha"<<patchyAlpha<<std::endl;
+    // std::cout<<"Inverse patchy Alpha square"<<invPow2<<std::endl;
+    // std::cout<<"Inverse patchy Pow alpha"<<invPatchyPowAlpha<<std::endl;
 
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
     COPY_NUMBER_TO_FLOAT(rcut2, _sqr_rcut);

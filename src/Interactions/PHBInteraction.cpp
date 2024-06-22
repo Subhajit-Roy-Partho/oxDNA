@@ -23,6 +23,7 @@ void PHBInteraction::get_settings(input_file &inp){
 	if(getInputString(&inp,"patchyAlpha",temp,0)==KEY_FOUND){
 		patchyAlpha=stod(temp);
 		patchyPowAlpha=powf(patchyAlpha, (number) 10.f);
+		invPatchyPowAlpha=1/patchyPowAlpha;
 		cout<<"New alpha value for patchy interaction = "<<patchyAlpha<<endl;
 	}
 	if(getInputString(&inp,"patchyRcut",temp,0)==KEY_FOUND){
