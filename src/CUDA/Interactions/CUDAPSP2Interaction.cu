@@ -15,15 +15,37 @@ __device__ int patchParticle[MAXparticles][MAXPatchPerParticle];
 __device__ float radius[MAXparticles];
 
 
-__device__ void TorqueSpring(int p, int q,int i,c_number4 &r, c_number4 &F, c_number4 &T){
+__device__ void TorqueSpring(int p, int q,int i,c_number4 &a1,c_number4 &a2,c_number4 &a3,c_number4 &b1,c_number4 &b2,c_number4 &b3,c_number4 &r, c_number4 &F, c_number4 &T){
     c_number k,r0;
-    c_number4 rP,rQ;
     k= spring[springParticle[p][i]][0];
     r0 = spring[springParticle[p][i]][1];
 
-    rP.x = spring[springParticle[p][i]][2];
-    rP.y = spring[springParticle[p][i]][3];
-    rP.z = spring[springParticle[p][i]][4];
+    c_number4 rP={
+        a1.x*spring[springParticle[p][i]][2]+a2.x*spring[springParticle[p][i]][3]+a3.x*spring[springParticle[p][i]][4],
+        a1.y*spring[springParticle[p][i]][2]+a2.y*spring[springParticle[p][i]][3]+a3.y*spring[springParticle[p][i]][4],
+        a1.z*spring[springParticle[p][i]][2]+a2.z*spring[springParticle[p][i]][3]+a3.z*spring[springParticle[p][i]][4],
+        0.0
+    };
+    c_number4 rQ={
+        b1.x*spring[invSpringParticle[p][i]][2]+b2.x*spring[invSpringParticle[p][i]][3]+b3.x*spring[invSpringParticle[p][i]][4],
+        b1.y*spring[invSpringParticle[p][i]][2]+b2.y*spring[invSpringParticle[p][i]][3]+b3.y*spring[invSpringParticle[p][i]][4],
+        b1.z*spring[invSpringParticle[p][i]][2]+b2.z*spring[invSpringParticle[p][i]][3]+b3.z*spring[invSpringParticle[p][i]][4],
+        0.0
+    };
+    c_number4 distr={
+        r.x-rP.x+rQ.x,
+        r.y-rP.y+rQ.y,
+        r.z-rP.z+rQ.z,
+        0.0
+    };
+    c_number dist =sqrtf(CUDA_DOT(distr,distr));
+    c_number effDist = dist-r0;
+    F.w+= 0.25*k*effDist*effDist;
+
+    c_number4 force = distr*(k*effDist/dist);
+    F.x += force.x;
+    F.y += force.y;
+    F.z += force.z;
 }
 
 __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *torques, int *matrix_neighs, int *number_neighs, CUDABox *box){
