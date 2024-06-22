@@ -61,6 +61,7 @@ __global__ void CUDAPSP2Particle(c_number4 *poss, GPU_quat *orientations, c_numb
         c_number4 b1,b2,b3;
         get_vectors_from_quat(orientations[id], b1, b2, b3);
         c_number4 r = box->minimum_image(ppos, poss[id]);
+        // TorqueSpring(IND,id,p,a1,a2,a3,b1,b2,b3,r,F,T);
     }
 
     int num_neighs = NUMBER_NEIGHBOURS(IND, number_neighs);
@@ -87,6 +88,7 @@ void CUDAPSP2Interaction::get_settings(input_file &inp) {
 
 void CUDAPSP2Interaction::cuda_init(int N){
     // Initialize the interaction
+    std::cout<<"Initializing the PSP2 interaction"<<std::endl;
     CUDABaseInteraction::cuda_init(N);
     PSP2Interaction::init();
     std::vector<BaseParticle *> particles(N);
@@ -96,7 +98,7 @@ void CUDAPSP2Interaction::cuda_init(int N){
     for(int i = 0; i < N; i++) {
         delete particles[i];
     }
-
+    std::cout<<"Starting to copy data to the device"<<std::endl;
     // Copy the data to the device
     // Integers
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_N, &N, sizeof(int)));
@@ -110,13 +112,13 @@ void CUDAPSP2Interaction::cuda_init(int N){
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(springParticle, &ParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(invSpringParticle, &invParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchParticle, &ParticlePatches, sizeof(int)*MAXparticles*MAXPatchPerParticle));
-
+    std::cout<<"Data copied to the device"<<std::endl;
 
 }
 
 void CUDAPSP2Interaction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, GPU_quat *d_orientations, c_number4 *d_forces, c_number4 *d_torques, LR_bonds *d_bonds, CUDABox *d_box) {
     // Compute the forces per particles
-    CUDAPSP2Particle <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>> 
-    (d_poss, d_orientations, d_forces,  d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
+    // CUDAPSP2Particle <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>> 
+    // (d_poss, d_orientations, d_forces,  d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
     CUT_CHECK_ERROR("Kernel failed, something quite exciting");
 }
