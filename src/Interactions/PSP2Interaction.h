@@ -23,10 +23,10 @@ public:
     int particleNum,strands,maxPatches,maxSprings; // header
 	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12;
 	number patchyRcut2 = SQR(patchyRcut), patchyAlphaB2 = 1/SQR(patchyAlpha);
-	number particleRadius[MAXparticles];
+	float particleRadius[MAXparticles];
 	int particleStrand[MAXparticles];
-	number Patches[MAXPatches][5]; // color,strength,x,y,z
-	number Springs[MAXSprings][5]; // k, ro , x,y,z
+	float Patches[MAXPatches][5]; // color,strength,x,y,z
+	float Springs[MAXSprings][5]; // k, ro , x,y,z
 	int ParticlePatches[MAXparticles][MAXPatchPerParticle+1];
 	int connections[MAXparticles][MAXneighbour+1];
 	int ParticleSprings[MAXparticles][MAXSpringPerParticle];

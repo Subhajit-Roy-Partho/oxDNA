@@ -8,8 +8,8 @@ iP 1 21 100 0 -5 0
 
 # iS = iS, k, r0, pos x, y , z  #### Spring info
 
-iS 0 12 1 5 0 0
-iS 1 12 1 -5 0 0
+iS 0 100 1 5 0 0
+iS 1 100 1 -5 0 0
 
 # Body = particleType, strand,radius,mass,NumPatches iP ...... ,iS .......
 # Color 100 is blank color, Neighbour -1 is blank
