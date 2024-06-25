@@ -1,5 +1,5 @@
 4 2 1 1
-# Header = Number of particles, strands, max number of patches per particle, repeated springs per particle
+# Header = Number of particles, strands, max number of springs per particle, repeated patches per particle
 
 # iP = iP, color, strength,pos x y z  ### Patch info
 
