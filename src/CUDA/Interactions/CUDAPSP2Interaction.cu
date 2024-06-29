@@ -17,7 +17,7 @@ __device__ int strand[MAXparticles];
 __device__ int connection[MAXparticles][MAXneighbour+1];
 __device__ int springParticle[MAXparticles][MAXSpringPerParticle];
 __device__ int invSpringParticle[MAXparticles][MAXSpringPerParticle];
-__device__ int patchParticle[MAXparticles][MAXPatchPerParticle];
+__device__ int patchParticle[MAXparticles][MAXPatchPerParticle+1];
 
 
 __device__ float radius[MAXparticles];
@@ -87,6 +87,7 @@ __forceinline__ __device__ void repulsiveLinear(const c_number4 &r,const c_numbe
 __forceinline__ __device__ void simplePatch(const int &p, const int &q, const c_number4 &a1,const c_number4 &a2,const c_number4 &a3,const c_number4 &b1,const c_number4 &b2,const c_number4 &b3,const c_number4 &r,const c_number &rmod,const c_number totRad,c_number4 &F, c_number4 &T){
     if(rmod-totRad>patchyCut) return;
     for(int pi=0;pi<patchParticle[p][0];pi++){
+                        // printf("Pi = %i\n",patchParticle[p][0]);
         c_number4 ppatch={
             a1.x*patch[patchParticle[p][pi+1]][2]+a2.x*patch[patchParticle[p][pi+1]][3]+a3.x*patch[patchParticle[p][pi+1]][4],
             a1.y*patch[patchParticle[p][pi+1]][2]+a2.y*patch[patchParticle[p][pi+1]][3]+a3.y*patch[patchParticle[p][pi+1]][4],
@@ -111,16 +112,17 @@ __forceinline__ __device__ void simplePatch(const int &p, const int &q, const c_
             c_number K = patch[patchParticle[p][pi+1]][1]+patch[patchParticle[q][qi+1]][1];
             c_number r2b2 = dist*alphaB2;
             c_number r8b10 = r2b2*r2b2*r2b2*r2b2*alphaB2;
-            c_number energy = 1.f*exp(-1*r8b10*dist)*K;
-            F.w-=energy;
+            c_number energy = -1.0*exp(-1*r8b10*dist)*K;
             c_number4 force = patchDist*(10*r8b10*energy);
             c_number4 torque = _cross(ppatch,force);
-            F.x += force.x;
-            F.y += force.y;
-            F.z += force.z;
-            T.x += torque.x;
-            T.y += torque.y;
-            T.z += torque.z;
+            // printf("Energy %f\n",energy);
+            F.w+=energy;
+            F.x -= force.x;
+            F.y -= force.y;
+            F.z -= force.z;
+            T.x -= torque.x;
+            T.y -= torque.y;
+            T.z -= torque.z;
         }
     }
 }
@@ -186,7 +188,7 @@ void CUDAPSP2Interaction::cuda_init(int N){
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(patch, &Patches, sizeof(float)*MAXPatches*5));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(springParticle, &ParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(invSpringParticle, &invParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
-    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchParticle, &ParticlePatches, sizeof(int)*MAXparticles*MAXPatchPerParticle));
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchParticle, &ParticlePatches, sizeof(int)*MAXparticles*(MAXPatchPerParticle+1)));
 
     //Singular Floats
     COPY_NUMBER_TO_FLOAT(sigma,patchySigma);

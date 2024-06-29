@@ -23,7 +23,7 @@ __device__ GPU_quat _get_updated_orientation(c_number4 &L, GPU_quat &old_o) {
 	return quat_multiply(old_o, R);
 }
 
-__global__ void first_step(float *invmass,float *invmr2,c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) {
+__global__ void first_step(c_number *invmass,c_number *invmr2,c_number4 *poss, GPU_quat *orientations, c_number4 *list_poss, c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques, bool *are_lists_old) {
 	if(IND >= MD_N[0]) return;
 
 	const c_number4 F = forces[IND];
@@ -470,7 +470,7 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 	torques[IND] = T;
 }
 
-__global__ void second_step(float *invmass,float *invmr2,c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques) {
+__global__ void second_step(c_number *invmass,c_number *invmr2,c_number4 *vels, c_number4 *Ls, c_number4 *forces, c_number4 *torques) {
 	if(IND >= MD_N[0]) return;
 
 	c_number4 F = forces[IND];

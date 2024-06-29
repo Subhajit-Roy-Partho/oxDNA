@@ -144,7 +144,7 @@ number PSP2Interaction::pair_interaction(BaseParticle *p, BaseParticle *q, bool 
 number PSP2Interaction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
     if(compute_r) _computed_r = _box->min_image(p->pos, q->pos);
     number energy = torqueSpring(p,q,compute_r,update_forces);
-    return energy;
+    return 0;
 }
 
 number PSP2Interaction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
