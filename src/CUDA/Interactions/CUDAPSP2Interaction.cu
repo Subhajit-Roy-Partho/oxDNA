@@ -1,8 +1,8 @@
 #include "CUDAPSP2Interaction.h"
 
 __constant__ int MD_N[1];
-__constant__ float spring[MAXPatches][5];
-__constant__ float patch[MAXSprings][5];
+__constant__ float spring[MAXSprings][5];
+__constant__ float patch[MAXPatches][5];
 __constant__ float sigma;
 __constant__ float Rstar;
 __constant__ float patchyb;

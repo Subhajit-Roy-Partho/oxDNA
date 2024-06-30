@@ -9,9 +9,9 @@
 #include <sstream>
 #include <cmath>
 
-#define MAXparticles 5 // maximum number of particles
-#define MAXPatches 2
-#define MAXSprings 2
+#define MAXparticles 3000 // maximum number of particles
+#define MAXPatches 50
+#define MAXSprings 100
 #define MAXPatchPerParticle 1
 #define MAXSpringPerParticle 12
 #define MAXneighbour 12 // number of bonded neighbout one particle is connected t0

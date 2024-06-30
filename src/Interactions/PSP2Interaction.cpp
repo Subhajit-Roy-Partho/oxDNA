@@ -57,6 +57,9 @@ void PSP2Interaction::read_topology(int *N_strands, std::vector<BaseParticle *> 
         std::istringstream body(line);
         // int j=0;
         body>>particles[i]->type>>particleStrand[i]>>particleRadius[i]>>particles[i]->mass;
+        particles[i]->invmass=1/particles[i]->mass;
+        particles[i]->mr2=particles[i]->mass*particleRadius[i]*particleRadius[i];
+        particles[i]->invmr2=1/particles[i]->mr2;
         auto *pp = dynamic_cast<PSP2Particle *>(particles[i]);
         pp->strand_id = particleStrand[i];
         body>>ParticlePatches[i][0];
@@ -144,7 +147,7 @@ number PSP2Interaction::pair_interaction(BaseParticle *p, BaseParticle *q, bool 
 number PSP2Interaction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
     if(compute_r) _computed_r = _box->min_image(p->pos, q->pos);
     number energy = torqueSpring(p,q,compute_r,update_forces);
-    return 0;
+    return energy;
 }
 
 number PSP2Interaction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {

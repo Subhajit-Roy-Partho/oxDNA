@@ -25,10 +25,10 @@ steps = 1e8
 edge_n_forces = 1
 
 ### MD PARAMS ###
-dt = 0.000001
+dt = 0.001
 newtonian_steps=51
 diff_coeff=1
-thermostat=no
+thermostat=john
 refresh_vel=1
 
 ### MC PARAMS ###
@@ -50,8 +50,8 @@ ensemble = NVT
 
 ##############################
 #parfile = replica.par
-topology = input.psp
-conf_file = input.dat
+topology = output.psp
+conf_file = output.dat
 trajectory_file = trajectory.dat
 lastconf_file=last_conf.dat
 log_file = log.ign
