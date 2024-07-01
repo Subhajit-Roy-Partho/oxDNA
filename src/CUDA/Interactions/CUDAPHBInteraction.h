@@ -14,6 +14,10 @@
 #include "../Lists/CUDASimpleVerletList.h"
 #include "../Lists/CUDANoList.h"
 
+#include <thrust/device_ptr.h>
+#include <thrust/fill.h>
+#include <thrust/transform.h>
+
 /**
  * @Subhajit-Roy-Partho
  * @brief This class implements both patchy and the helix bundles interactions in CUDA

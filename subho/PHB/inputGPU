@@ -5,8 +5,8 @@ backend = CUDA
 backend_precision = mixed
 CUDA_list = verlet
 CUDA_sort_every = 0
-#use_edge = true
-edge_n_forces = true
+use_edge = 1
+#edge_n_forces = true
 debug = false
 #seed = 1
 interaction_type = PHB
@@ -20,7 +20,7 @@ max_density_multiplier = 10
 T_force_value = true
 verlet_skin = 0.25
 sim_type = MD
-steps = 1e5
+steps = 1
 edge_n_forces = 1
 
 ### MD PARAMS ###
