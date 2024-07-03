@@ -71,7 +71,7 @@ void PHBInteraction::get_settings(input_file &inp){
 void PHBInteraction::init(){
 	// cout<<"INIT is called"<<endl;
 	number r8b10 = powf(patchyRcut, (number) 8.f) / patchyPowAlpha;
-    patchEcut = -1.001f * exp(-(number) 0.5f * r8b10 * patchyRcut2);
+    patchEcut = -1.001f * exp(-1 * r8b10 * patchyRcut2);
 };
 void PHBInteraction::allocate_particles(std::vector<BaseParticle *> &particles){
 	particles.resize(totPar);
@@ -746,7 +746,7 @@ number PHBInteraction::patchy_interaction_notorsion(PHBParticle *p, PHBParticle 
 
 				    number r8b10 = dist*dist*dist*dist *invPatchyPowAlpha;
 				    number exp_part = -1* exp(-1.f*r8b10 * dist)*K;
-                    energy +=exp_part;
+                    energy +=exp_part-patchEcut*K;
 
 					if(update_forces){
 						if (exp_part <patchyLockCutOff){

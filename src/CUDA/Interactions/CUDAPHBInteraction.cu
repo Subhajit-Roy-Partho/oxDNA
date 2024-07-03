@@ -1,5 +1,8 @@
 #include "CUDAPHBInteraction.h"
 
+int threshold = 30;
+__constant__ int thresholdGPU = 30;
+
 __constant__ float rcut2;  // cut-off distance squared
 __constant__ int exclusionType; // 0 for Linear, 1 for Cubic, 2 for Hard
 __constant__ float sigma; // 
@@ -11,6 +14,7 @@ __constant__ float powAlpha;
 __constant__ float patchyEps;
 __constant__ float hardVolCutoff;
 __constant__ int MD_N[1];
+__constant__ int MD_n_forces[1];
 __constant__ int n_forces;
 __constant__ float B2;
 __constant__ float invPowAlpha;
@@ -77,7 +81,7 @@ __device__ void CUDAspring(c_number4 &r, c_number r0, c_number k, c_number4 &F, 
 ///////////////////nonbonded Interactions ////////////////////
 
 // CPU hits stuff twice for each pair of particles
-__device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc,c_number r2)
+__device__ void CUDAexeVolLin(c_number prefactor, const c_number4 &r, c_number4 &F, c_number sigma, c_number rstar, c_number b, c_number rc,c_number r2)
 {
     // auto r2 = CUDA_DOT(r, r);
     if (r2 < SQR(rc))
@@ -102,9 +106,256 @@ __device__ void CUDAexeVolLin(c_number prefactor, c_number4 &r, c_number4 &F, c_
     }
 }
 
+// __device__ void PatchyInteraction(const int pindex, const int qindex,const c_number4 &a1,const c_number4 &a2, const c_number4 &a3, const c_number4 &b1, const c_number4 &b2, const c_number4 &b3,const c_number4 &r,const c_number &totalRad,const c_number &sqr_r,c_number4 &F, c_number4 &T){
+//     int pParticleColor = iC[pindex];
+//     int qParticleColor = iC[qindex];
+//     if(pParticleColor ==100 || qParticleColor ==100 || (sqr_r-totalRad*totalRad)>patchyRcutSqr) return;
+//     for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+//         int pPatchid = numPatches[pParticleColor][pi+1];
+//         c_number4 ppatch ={
+//             a1.x*patches[pPatchid][2]+a2.x*patches[pPatchid][3]+a3.x*patches[pPatchid][4],
+//             a1.y*patches[pPatchid][2]+a2.y*patches[pPatchid][3]+a3.y*patches[pPatchid][4],
+//             a1.z*patches[pPatchid][2]+a2.z*patches[pPatchid][3]+a3.z*patches[pPatchid][4],
+//             0.f
+//         };
+//         for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+//             int qPatchid = numPatches[qParticleColor][qj+1];
+//             c_number4 qpatch={
+//                 b1.x*patches[qPatchid][2]+b2.x*patches[qPatchid][3]+b3.x*patches[qPatchid][4],
+//                 b1.y*patches[qPatchid][2]+b2.y*patches[qPatchid][3]+b3.y*patches[qPatchid][4],
+//                 b1.z*patches[qPatchid][2]+b2.z*patches[qPatchid][3]+b3.z*patches[qPatchid][4],
+//                 0.f
+//             };
+//             c_number4 patchDist ={
+//                 r.x+qpatch.x-ppatch.x,
+//                 r.y+qpatch.y-ppatch.y,
+//                 r.z+qpatch.z-ppatch.z,
+//                 0.f
+//             };
+//             c_number dist = CUDA_DOT(patchDist,patchDist);
+//             if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]!=0 || dist>patchyRcutSqr)) return ;
+//             c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+//             c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
+//             c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+//             c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+//             c_number4 torque = _cross(ppatch,tmp_force);
+//             F.w+= exp_part;
+//             F.x -= tmp_force.x;
+//             F.y -= tmp_force.y;
+//             F.z -= tmp_force.z;
+//             T.x -= torque.x;
+//             T.y -= torque.y;
+//             T.z -= torque.z;
+//         }
+//     }
+// }
+
+__forceinline__ __device__ void PatchyInteraction(const int ind, const int k_index,const c_number4 &a1,const c_number4 &a2, const c_number4 &a3, const c_number4 &b1, const c_number4 &b2, const c_number4 &b3,const c_number4 &r,const c_number &totalRad,const c_number &sqr_r,c_number4 &F, c_number4 &T){
+    int pParticleColor = iC[ind];
+    int qParticleColor = iC[k_index];
+    if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){ //This speed up stuff
+        // printf("i=%i  j=%i\n",ind,k_index);
+        for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+            int pPatchid = numPatches[pParticleColor][pi+1];
+            c_number4 patchLoc = {patches[pPatchid][2],patches[pPatchid][3],patches[pPatchid][4],0.f};
+            c_number4 ppatch ={
+                a1.x*patchLoc.x+a2.x*patchLoc.y+a3.x*patchLoc.z,
+                a1.y*patchLoc.x+a2.y*patchLoc.y+a3.y*patchLoc.z,
+                a1.z*patchLoc.x+a2.z*patchLoc.y+a3.z*patchLoc.z,
+                0.f
+            };
+            // printf("i=%i  j=%i  ppatch= (%f,%f,%f,%f)",ind,k_index,ppatch.x,ppatch.y,ppatch.z);
+            for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+                int qPatchid = numPatches[qParticleColor][qj+1];
+                c_number4 patchLoc = {patches[qPatchid][2],patches[qPatchid][3],patches[qPatchid][4],0.f};
+                c_number4 qpatch={
+                    b1.x*patchLoc.x+b2.x*patchLoc.y+b3.x*patchLoc.z,
+                    b1.y*patchLoc.x+b2.y*patchLoc.y+b3.y*patchLoc.z,
+                    b1.z*patchLoc.x+b2.z*patchLoc.y+b3.z*patchLoc.z,
+                    0.f
+                };
+            //     // printf("i=%i  j=%i  qpatch= (%f,%f,%f,%f)\nS",ind,k_index,qpatch.x,qpatch.y,qpatch.z);
+                c_number4 patchDist ={
+                    r.x+qpatch.x-ppatch.x,
+                    r.y+qpatch.y-ppatch.y,
+                    r.z+qpatch.z-ppatch.z,
+                    0.f
+                };
+                c_number dist = CUDA_DOT(patchDist,patchDist);
+                if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr)){
+                        c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+                        // c_number r2b2 = dist*B2;
+                        // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                        c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
+                        c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+                        c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+                        c_number4 torque = _cross(ppatch,tmp_force);
+                        F.w+= exp_part;
+                        F.x -= tmp_force.x;
+                        F.y -= tmp_force.y;
+                        F.z -= tmp_force.z;
+                        T.x -= torque.x;
+                        T.y -= torque.y;
+                        T.z -= torque.z;
+                }
+            }
+        }
+    }
+};
+
+
+__forceinline__ __device__ void PatchyInteraction2(const int ind, const int k_index,const c_number4 &a1,const c_number4 &a2, const c_number4 &a3, const c_number4 &b1, const c_number4 &b2, const c_number4 &b3,const c_number4 &r,const c_number &totalRad,const c_number &sqr_r,c_number4 &F, c_number4 &T){
+    int pParticleColor = iC[ind];
+    int qParticleColor = iC[k_index];
+    if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){ //This speed up stuff
+        // printf("i=%i  j=%i\n",ind,k_index);
+        for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+            int pPatchid = numPatches[pParticleColor][pi+1];
+            c_number4 patchLoc = {patches[pPatchid][2],patches[pPatchid][3],patches[pPatchid][4],0.f};
+            c_number4 ppatch ={
+                a1.x*patchLoc.x+a2.x*patchLoc.y+a3.x*patchLoc.z,
+                a1.y*patchLoc.x+a2.y*patchLoc.y+a3.y*patchLoc.z,
+                a1.z*patchLoc.x+a2.z*patchLoc.y+a3.z*patchLoc.z,
+                0.f
+            };
+            // printf("i=%i  j=%i  ppatch= (%f,%f,%f,%f)",ind,k_index,ppatch.x,ppatch.y,ppatch.z);
+            for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+                int qPatchid = numPatches[qParticleColor][qj+1];
+                c_number4 patchLoc = {patches[qPatchid][2],patches[qPatchid][3],patches[qPatchid][4],0.f};
+                c_number4 qpatch={
+                    b1.x*patchLoc.x+b2.x*patchLoc.y+b3.x*patchLoc.z,
+                    b1.y*patchLoc.x+b2.y*patchLoc.y+b3.y*patchLoc.z,
+                    b1.z*patchLoc.x+b2.z*patchLoc.y+b3.z*patchLoc.z,
+                    0.f
+                };
+            //     // printf("i=%i  j=%i  qpatch= (%f,%f,%f,%f)\nS",ind,k_index,qpatch.x,qpatch.y,qpatch.z);
+                c_number4 patchDist ={
+                    r.x+qpatch.x-ppatch.x,
+                    r.y+qpatch.y-ppatch.y,
+                    r.z+qpatch.z-ppatch.z,
+                    0.f
+                };
+                c_number dist = CUDA_DOT(patchDist,patchDist);
+                if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr)){
+                    if((PatchLock[ind][pi][0]==-1||(PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)) && (PatchLock[k_index][qj][0]==-1||(PatchLock[k_index][qj][0]==ind && PatchLock[k_index][qj][1]==pi))){
+                        c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+                        // c_number r2b2 = dist*B2;
+                        // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                        c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
+                        c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+                        c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+                        c_number4 torque = _cross(ppatch,tmp_force);
+                        F.w+= exp_part;
+                        F.x -= tmp_force.x;
+                        F.y -= tmp_force.y;
+                        F.z -= tmp_force.z;
+                        T.x -= torque.x;
+                        T.y -= torque.y;
+                        T.z -= torque.z;
+                        if(exp_part<patchLockCut){
+                            if(PatchLock[ind][pi][0]==-1||PatchLock[k_index][qj][0]==-1){ // this is slow because of multiple calls but faster on big gpus like a100
+                                PatchLock[ind][pi][0] = k_index;
+                                PatchLock[ind][pi][1] = qj;
+                                PatchLock[k_index][qj][0] = ind;
+                                PatchLock[k_index][qj][1] = pi;
+                            }
+                        }else{
+                            PatchLock[ind][pi][0] = -1;
+                            PatchLock[ind][pi][1] = -1;
+                            PatchLock[k_index][qj][0] = -1;
+                            PatchLock[k_index][qj][1] = -1;
+                        }
+                    } else if((PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)&&(PatchLock[k_index][qj][0]!=ind || PatchLock[k_index][qj][1]!=pi)){
+                        PatchLock[ind][pi][0] = -1;
+                        PatchLock[ind][pi][1] = -1;
+                        PatchLock[k_index][qj][0] = -1;
+                        PatchLock[k_index][qj][1] = -1;
+                        printf("Assymetrically locked, unlocking\n");
+                    }
+                }
+            }
+        }
+    }
+};
+
+__device__ void PatchyInteraction2(const int ind, const int k_index,const c_number4 &a1,const c_number4 &a2, const c_number4 &a3, const c_number4 &b1, const c_number4 &b2, const c_number4 &b3,const c_number4 &r,const c_number &totalRad,const c_number &sqr_r,c_number4 &F, c_number4 &T,c_number4 &Tq){
+    int pParticleColor = iC[ind];
+    int qParticleColor = iC[k_index];
+    if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){ //This speed up stuff
+        for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+            c_number4 ppatch ={
+                a1.x*patches[numPatches[pParticleColor][pi+1]][2]+a2.x*patches[numPatches[pParticleColor][pi+1]][3]+a3.x*patches[numPatches[pParticleColor][pi+1]][4],
+                a1.y*patches[numPatches[pParticleColor][pi+1]][2]+a2.y*patches[numPatches[pParticleColor][pi+1]][3]+a3.y*patches[numPatches[pParticleColor][pi+1]][4],
+                a1.z*patches[numPatches[pParticleColor][pi+1]][2]+a2.z*patches[numPatches[pParticleColor][pi+1]][3]+a3.z*patches[numPatches[pParticleColor][pi+1]][4],
+                0.f
+            };
+            for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+                c_number4 qpatch={
+                    b1.x*patches[numPatches[qParticleColor][qj+1]][2]+b2.x*patches[numPatches[qParticleColor][qj+1]][3]+b3.x*patches[numPatches[qParticleColor][qj+1]][4],
+                    b1.y*patches[numPatches[qParticleColor][qj+1]][2]+b2.y*patches[numPatches[qParticleColor][qj+1]][3]+b3.y*patches[numPatches[qParticleColor][qj+1]][4],
+                    b1.z*patches[numPatches[qParticleColor][qj+1]][2]+b2.z*patches[numPatches[qParticleColor][qj+1]][3]+b3.z*patches[numPatches[qParticleColor][qj+1]][4],
+                    0.f
+                };
+                c_number4 patchDist ={
+                    r.x+qpatch.x-ppatch.x,
+                    r.y+qpatch.y-ppatch.y,
+                    r.z+qpatch.z-ppatch.z,
+                    0.f
+                };
+                c_number dist = CUDA_DOT(patchDist,patchDist);
+                if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr)){
+                    if((PatchLock[ind][pi][0]==-1||(PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)) && (PatchLock[k_index][qj][0]==-1||(PatchLock[k_index][qj][0]==ind && PatchLock[k_index][qj][1]==pi))){
+                        c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+                        // c_number r2b2 = dist*B2;
+                        // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+                        c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
+                        c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+                        c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+
+                        c_number4 torque = _cross(ppatch,tmp_force);
+                        F.w+= exp_part;
+                        F.x -= tmp_force.x;
+                        F.y -= tmp_force.y;
+                        F.z -= tmp_force.z;
+                        T.x -= torque.x;
+                        T.y -= torque.y;
+                        T.z -= torque.z;
+                        torque = _cross(qpatch,tmp_force);
+                        Tq.x += torque.x;
+                        Tq.y += torque.y;
+                        Tq.z += torque.z;
+                        if(exp_part<patchLockCut){
+                            if(PatchLock[ind][pi][0]==-1||PatchLock[k_index][qj][0]==-1){ // this is slow because of multiple calls but faster on big gpus like a100
+                                PatchLock[ind][pi][0] = k_index;
+                                PatchLock[ind][pi][1] = qj;
+                                PatchLock[k_index][qj][0] = ind;
+                                PatchLock[k_index][qj][1] = pi;
+                            }
+                        }else{
+                            PatchLock[ind][pi][0] = -1;
+                            PatchLock[ind][pi][1] = -1;
+                            PatchLock[k_index][qj][0] = -1;
+                            PatchLock[k_index][qj][1] = -1;
+                        }
+                    } else if((PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)&&(PatchLock[k_index][qj][0]!=ind || PatchLock[k_index][qj][1]!=pi)){
+                        PatchLock[ind][pi][0] = -1;
+                        PatchLock[ind][pi][1] = -1;
+                        PatchLock[k_index][qj][0] = -1;
+                        PatchLock[k_index][qj][1] = -1;
+                        printf("Assymetrically locked, unlocking\n");
+                    }
+                }
+            }
+        }
+    }
+};
+
+
+
+// __device__ void Nonbonded()
 ///////////////////Helix Interaction /////////////////////////
 
-__device__ void CUDAbondedDoubleBending(c_number4 &up, c_number4 &uq,c_number4 &F, c_number4 &T){
+__device__ void CUDAbondedDoubleBending(const c_number4 &up,const c_number4 &uq,c_number4 &F, c_number4 &T){
     c_number4 torque;
 
     c_number cosine = CUDA_DOT(up,uq);
@@ -235,77 +486,7 @@ __global__ void CUDAparticle(const c_number4 __restrict__ *poss, const GPU_quat 
             c_number rb = patchyb/SQR(totalRad);
             c_number rRc = totalRad*Rc;
             CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
-
-            // Patchy Interaction //
-            int pParticleColor = iC[ind];
-            int qParticleColor = iC[k_index];
-            if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){ //This speed up stuff
-                // printf("i=%i  j=%i\n",ind,k_index);
-                for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
-                    c_number4 ppatch ={
-                        a1.x*patches[numPatches[pParticleColor][pi+1]][2]+a2.x*patches[numPatches[pParticleColor][pi+1]][3]+a3.x*patches[numPatches[pParticleColor][pi+1]][4],
-                        a1.y*patches[numPatches[pParticleColor][pi+1]][2]+a2.y*patches[numPatches[pParticleColor][pi+1]][3]+a3.y*patches[numPatches[pParticleColor][pi+1]][4],
-                        a1.z*patches[numPatches[pParticleColor][pi+1]][2]+a2.z*patches[numPatches[pParticleColor][pi+1]][3]+a3.z*patches[numPatches[pParticleColor][pi+1]][4],
-                        0.f
-                    };
-                    // printf("i=%i  j=%i  ppatch= (%f,%f,%f,%f)",ind,k_index,ppatch.x,ppatch.y,ppatch.z);
-                    for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
-                    //     // printf("i=%i  j=%i\n",ind,k_index);
-                        c_number4 qpatch={
-                            b1.x*patches[numPatches[qParticleColor][qj+1]][2]+b2.x*patches[numPatches[qParticleColor][qj+1]][3]+b3.x*patches[numPatches[qParticleColor][qj+1]][4],
-                            b1.y*patches[numPatches[qParticleColor][qj+1]][2]+b2.y*patches[numPatches[qParticleColor][qj+1]][3]+b3.y*patches[numPatches[qParticleColor][qj+1]][4],
-                            b1.z*patches[numPatches[qParticleColor][qj+1]][2]+b2.z*patches[numPatches[qParticleColor][qj+1]][3]+b3.z*patches[numPatches[qParticleColor][qj+1]][4],
-                            0.f
-                        };
-                    //     // printf("i=%i  j=%i  qpatch= (%f,%f,%f,%f)\nS",ind,k_index,qpatch.x,qpatch.y,qpatch.z);
-                        c_number4 patchDist ={
-                            r.x+qpatch.x-ppatch.x,
-                            r.y+qpatch.y-ppatch.y,
-                            r.z+qpatch.z-ppatch.z,
-                            0.f
-                        };
-                        c_number dist = CUDA_DOT(patchDist,patchDist);
-                        if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr)){
-                            if((PatchLock[ind][pi][0]==-1||(PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)) && (PatchLock[k_index][qj][0]==-1||(PatchLock[k_index][qj][0]==ind && PatchLock[k_index][qj][1]==pi))){
-                                c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
-                                // c_number r2b2 = dist*B2;
-                                // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
-                                c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
-                                c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
-                                c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
-
-                                c_number4 torque = _cross(ppatch,tmp_force);
-                                F.w+= exp_part;
-                                F.x -= tmp_force.x;
-                                F.y -= tmp_force.y;
-                                F.z -= tmp_force.z;
-                                T.x -= torque.x;
-                                T.y -= torque.y;
-                                T.z -= torque.z;
-                                if(exp_part<patchLockCut){
-                                    if(PatchLock[ind][pi][0]==-1||PatchLock[k_index][qj][0]==-1){ // this is slow because of multiple calls but faster on big gpus like a100
-                                        PatchLock[ind][pi][0] = k_index;
-                                        PatchLock[ind][pi][1] = qj;
-                                        PatchLock[k_index][qj][0] = ind;
-                                        PatchLock[k_index][qj][1] = pi;
-                                    }
-                                }else{
-                                    PatchLock[ind][pi][0] = -1;
-                                    PatchLock[ind][pi][1] = -1;
-                                    PatchLock[k_index][qj][0] = -1;
-                                    PatchLock[k_index][qj][1] = -1;
-                                }
-                            } else if((PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)&&(PatchLock[k_index][qj][0]!=ind || PatchLock[k_index][qj][1]!=pi)){
-                                PatchLock[ind][pi][0] = -1;
-                                PatchLock[ind][pi][1] = -1;
-                                PatchLock[k_index][qj][0] = -1;
-                                PatchLock[k_index][qj][1] = -1;
-                                printf("Assymetrically locked, unlocking\n");
-                            }
-                        }
-                    }
-                }
-            }
+            PatchyInteraction2(ind,k_index,a1,a2,a3,b1,b2,b3,r,totalRad,sqr_r,F,T);
         }
     }
 
@@ -315,12 +496,16 @@ __global__ void CUDAparticle(const c_number4 __restrict__ *poss, const GPU_quat 
 }
 
 
-
 ///// Interaction Individually ////////////////
 __global__ void ParallelSpring(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const int *matrix_neighs,const int *number_neighs, const CUDABox *box){
     int ind = IND;
     if(blockIdx.z>=connection[ind][0]||ind>=MD_N[0]) return;
     int id = connection[ind][blockIdx.z+1];
+    c_number4 a1,a2,a3,b1,b2,b3;
+    get_vectors_from_quat(orientations[ind], a1, a2, a3);
+    get_vectors_from_quat(orientations[id], b1, b2, b3);
+
+
     c_number4 r = box->minimum_image(poss[ind], poss[id]);
     c_number sqr_r = CUDA_DOT(r, r);
     c_number rmod = sqrtf(sqr_r);
@@ -332,7 +517,126 @@ __global__ void ParallelSpring(const c_number4 __restrict__ *poss, const GPU_qua
         r.z* magForce,
         0.5f * k[ind][blockIdx.z] * dist * dist
         };
+    c_number4 T=make_c_number4(0,0,0,0);
+    CUDAbondedDoubleBending(a1,b1,F,T);
+
+
+    c_number4 up,tp;
+    if(id-ind==1){
+        up = a1;
+        tp = r;
+
+        c_number4 force = ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
+        F.x -= force.x;
+        F.y -= force.y;
+        F.z -= force.z;
+        F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+        c_number4 torque = -(ka*_cross(tp,up))/rmod;
+        T.x += torque.x;
+        T.y += torque.y;
+        T.z += torque.z;
+    }
+
+    if(ind-id==1){
+        up = b1;
+        tp = -r;
+
+        c_number4 force = ka*(up-tp*CUDA_DOT(up,tp)/SQR(rmod))/rmod;
+        F.x += force.x;
+        F.y += force.y;
+        F.z += force.z;
+        F.w += ka*(1.f-CUDA_DOT(up,tp)/rmod);
+    }
+    T=_vectors_transpose_c_number4_product(a1, a2, a3, T);
     addFloat4(forces,ind,F);
+    addFloat4(torques,ind,T);
+}
+
+// __global__ void DoubleBendingParallel(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const int *matrix_neighs,const int *number_neighs, const CUDABox *box){
+//     int ind = IND;
+//     if(blockIdx.z>=connection[ind][0]||ind>=MD_N[0]) return;
+//     int id = connection[ind][blockIdx.z+1];
+//     c_number4 r = box->minimum_image(poss[ind], poss[id]);
+//     c_number sqr_r = CUDA_DOT(r, r);
+//     c_number rmod = sqrtf(sqr_r);
+//     c_number dist = rmod - ro[ind][blockIdx.z];
+//     c_number magForce = (k[ind][blockIdx.z] * dist) / rmod;
+//     c_number4 a1,a2,a3,b1,b2,b3,F,T;
+//     get_vectors_from_quat(orientations[ind], a1, a2, a3);
+//     get_vectors_from_quat(orientations[id], b1, b2, b3);
+//     CUDAbondedDoubleBending(a1,b1,F,T);
+//     T=_vectors_transpose_c_number4_product(a1, a2, a3, T);
+//     addFloat4(forces,ind,F);
+//     addFloat4(torques,ind,T);
+// }
+
+__global__ void ParallelNonbonded(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 *forces, c_number4 *torques, const edge_bond __restrict__ *edge_list, int n_edges, const CUDABox *box){
+
+    if(IND >= n_edges) return;
+
+    edge_bond b = edge_list[IND];
+    int ind = MD_N[0] * (IND % MD_n_forces[0]) + b.from;
+    int k_index = MD_N[0] * (IND % MD_n_forces[0]) + b.to;
+
+    if(strand[ind]==strand[k_index]) return; // No interaction on same strand
+
+    c_number4 Tp = make_c_number4(0,0,0,0);
+    c_number4 Tq = make_c_number4(0,0,0,0);
+
+        c_number4 F = make_c_number4(0,0,0,0);
+        c_number4 T = make_c_number4(0,0,0,0);
+        c_number4 a1,a2,a3,b1,b2,b3;
+        c_number4 ppos = poss[ind];
+        c_number4 qpos = poss[k_index];
+        get_vectors_from_quat(orientations[ind], a1, a2, a3);
+        get_vectors_from_quat(orientations[k_index], b1, b2, b3);
+        c_number totalRad = radius[ind] + radius[k_index];
+        c_number4 r = box->minimum_image(ppos, qpos);
+        c_number sqr_r = CUDA_DOT(r, r);
+        c_number rSigma = totalRad*sigma;
+        c_number rRstar = totalRad*Rstar;
+        c_number rb = patchyb/SQR(totalRad);
+        c_number rRc = totalRad*Rc;
+        CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
+        PatchyInteraction2(ind,k_index,a1,a2,a3,b1,b2,b3,r,totalRad,sqr_r,F,T,Tq);
+        addFloat4(forces,ind,F);
+        addFloat4(forces,k_index,-F);
+        T=_vectors_transpose_c_number4_product(a1, a2, a3, T);
+        addFloat4(torques,ind,T);
+        Tq=_vectors_c_number4_product(b1,b2,b3,Tq);
+        addFloat4(torques,k_index,Tq);
+}
+
+__global__ void ParallelNonbondedThreshold(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const int *matrix_neighs,const int *number_neighs, const CUDABox *box){
+    int ind = IND;
+    if(ind>=MD_N[0]|| blockIdx.z>= number_neighs[ind]) return;
+    int final = number_neighs[ind]>thresholdGPU&&blockIdx.z==thresholdGPU?number_neighs[ind]:blockIdx.z+1;
+    // if(final>=thresholdGPU) printf("Final = %i\n",final);
+    for(int j=blockIdx.z;j<final;j++){
+        int k_index = NEXT_NEIGHBOUR(ind, j, matrix_neighs);
+        if(k_index == ind || strand[ind]==strand[k_index]) return;
+        c_number4 F = make_c_number4(0,0,0,0);
+        c_number4 T = make_c_number4(0,0,0,0);
+        c_number4 a1,a2,a3,b1,b2,b3;
+        c_number4 ppos = poss[ind];
+        c_number4 qpos = poss[k_index];
+        get_vectors_from_quat(orientations[ind], a1, a2, a3);
+        get_vectors_from_quat(orientations[k_index], b1, b2, b3);
+        c_number totalRad = radius[ind] + radius[k_index];
+        c_number4 r = box->minimum_image(ppos, qpos);
+        c_number sqr_r = CUDA_DOT(r, r);
+        c_number rSigma = totalRad*sigma;
+        c_number rRstar = totalRad*Rstar;
+        c_number rb = patchyb/SQR(totalRad);
+        c_number rRc = totalRad*Rc;
+        CUDAexeVolLin(1.f,r,F,rSigma,rRstar,rb,rRc,sqr_r);
+        PatchyInteraction(ind,k_index,a1,a2,a3,b1,b2,b3,r,totalRad,sqr_r,F,T);
+        if(CUDA_DOT(F,F)>(c_number)0) addFloat4(forces,ind,F);
+        if(CUDA_DOT(T,T)>(c_number)0){
+            T=_vectors_transpose_c_number4_product(a1, a2, a3, T);
+            addFloat4(torques,ind,T);
+        }
+    }
 
 }
 
@@ -396,20 +700,6 @@ void CUDAPHBInteraction::cuda_init(int N){
     COPY_NUMBER_TO_FLOAT(kt, _kt);
     COPY_NUMBER_TO_FLOAT(patchLockCut,patchyLockCutOff);
 
-    // COPY_ARRAY_TO_CONSTANT(patches,&GPUnumPatches,GPUmaxiP*5);
-    // COPY_ARRAY_TO_CONSTANT(connection, GPUconnections, MAXparticles * (MAXneighbour + 1));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyb, &patchyB, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rstar, &patchyRstar, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(Rc, &patchyRc, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyRcutSqr, &patchyCutOff2, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(powAlpha, &patchyPowAlpha, sizeof(float)));
-
-
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchyEps, &patchyEpsilon, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(hardVolCutoff, &GPUhardVolCutoff, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(n_forces, &_n_forces, sizeof(int)));
-
-
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(patches, &GPUpatches, sizeof(float) * GPUmaxiP * 5));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(numPatches, &GPUnumPatches, sizeof(int) * GPUmaxiC * MaxPatches));
 
@@ -419,11 +709,6 @@ void CUDAPHBInteraction::cuda_init(int N){
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(strand, &GPUstrand, sizeof(int) * MAXparticles));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(iC, &GPUiC, sizeof(int) * MAXparticles));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(radius, &GPUradius, sizeof(float) * MAXparticles));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(mass, &GPUmass, sizeof(float) * MAXparticles));
-
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(ka, &_ka, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(kb, &_kb, sizeof(float)));
-    // CUDA_SAFE_CALL(cudaMemcpyToSymbol(kt, &_kt, sizeof(float)));
 
     // std::cout<<"CUDA Connection Info"<<std::endl;
     // for(int i=0;i<7;i++){
@@ -452,7 +737,7 @@ void CUDAPHBInteraction::cuda_init(int N){
     // }
     // std::cout<<patchyPowAlpha<<std::endl;
 
-    _launch_cfg.blocks.z=2;
+    if(this->_use_edge) CUDA_SAFE_CALL(cudaMemcpyToSymbol(MD_n_forces, &this->_n_forces, sizeof(int)));
 }
 
 void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, GPU_quat *d_orientations, c_number4 *d_forces, c_number4 *d_torques, LR_bonds *d_bonds, CUDABox *d_box)
@@ -480,10 +765,23 @@ void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, 
         // std::cout<<"I am here"<<std::endl;
         // std::cout<<"Threads per block = "<<_launch_cfg.threads_per_block<<std::endl;
         // std::cout<<"Total Number of particles = "<< CUDABaseInteraction::_N<<std::endl;
-        _launch_cfg.blocks.z=2;
-        // std::cout<<"Blocks = "<<_launch_cfg.blocks.x<<","<<_launch_cfg.blocks.y<<","<<_launch_cfg.blocks.z<<std::endl;
+        // std::cout<<"Z blocks = "<<_launch_cfg.blocks.z<<std::endl;
+        //  _launch_cfg.blocks.z=1;
+        // ParallelNonbonded <<<(lists->N_edges - 1)/(_launch_cfg.threads_per_block) + 1, _launch_cfg.threads_per_block>>>
+        // (d_poss, d_orientations,d_forces,d_torques, lists->d_edge_list, lists->N_edges,d_box);
+        // this->_sum_edge_forces_torques(d_forces, d_torques);
+        // cudaThreadSynchronize();
+        _launch_cfg.blocks.z=threshold+1;
+        ParallelNonbondedThreshold<<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>>
+        (d_poss, d_orientations, d_forces, d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
+        
+        _launch_cfg.blocks.z=MAXneighbour;
         ParallelSpring <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>>
         (d_poss, d_orientations, d_forces, d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
+        // __syncthreads();
+        cudaThreadSynchronize();
+        // DoubleBendingParallel <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>>
+        // (d_poss, d_orientations, d_forces, d_torques, lists->d_matrix_neighs, lists->d_number_neighs, d_box);
         // std::cout<<"N = "<<N<<std::endl;
     }else{
         CUDAparticle <<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>> 
@@ -497,3 +795,77 @@ void CUDAPHBInteraction::compute_forces(CUDABaseList *lists, c_number4 *d_poss, 
 
     CUT_CHECK_ERROR("Kernel failed, something quite exciting");
 }
+
+
+//// Notes: I can't make the edge work and by enabling edge parallel bonded and Threshold bonded will work.
+//// In threshold method threshold+1 of z axis blocks will be used for nonbonded interaction, please update threshold and thresholdGPU to same value.
+            // Patchy Interaction //
+    //         int pParticleColor = iC[ind];
+    //         int qParticleColor = iC[k_index];
+    //         if(pParticleColor !=100 && qParticleColor !=100 && (sqr_r-totalRad*totalRad)<patchyRcutSqr){ //This speed up stuff
+    //             // printf("i=%i  j=%i\n",ind,k_index);
+    //             for(int pi=0;pi<numPatches[pParticleColor][0];pi++){
+    //                 c_number4 ppatch ={
+    //                     a1.x*patches[numPatches[pParticleColor][pi+1]][2]+a2.x*patches[numPatches[pParticleColor][pi+1]][3]+a3.x*patches[numPatches[pParticleColor][pi+1]][4],
+    //                     a1.y*patches[numPatches[pParticleColor][pi+1]][2]+a2.y*patches[numPatches[pParticleColor][pi+1]][3]+a3.y*patches[numPatches[pParticleColor][pi+1]][4],
+    //                     a1.z*patches[numPatches[pParticleColor][pi+1]][2]+a2.z*patches[numPatches[pParticleColor][pi+1]][3]+a3.z*patches[numPatches[pParticleColor][pi+1]][4],
+    //                     0.f
+    //                 };
+    //                 // printf("i=%i  j=%i  ppatch= (%f,%f,%f,%f)",ind,k_index,ppatch.x,ppatch.y,ppatch.z);
+    //                 for(int qj=0;qj<numPatches[qParticleColor][0];qj++){
+    //                 //     // printf("i=%i  j=%i\n",ind,k_index);
+    //                     c_number4 qpatch={
+    //                         b1.x*patches[numPatches[qParticleColor][qj+1]][2]+b2.x*patches[numPatches[qParticleColor][qj+1]][3]+b3.x*patches[numPatches[qParticleColor][qj+1]][4],
+    //                         b1.y*patches[numPatches[qParticleColor][qj+1]][2]+b2.y*patches[numPatches[qParticleColor][qj+1]][3]+b3.y*patches[numPatches[qParticleColor][qj+1]][4],
+    //                         b1.z*patches[numPatches[qParticleColor][qj+1]][2]+b2.z*patches[numPatches[qParticleColor][qj+1]][3]+b3.z*patches[numPatches[qParticleColor][qj+1]][4],
+    //                         0.f
+    //                     };
+    //                 //     // printf("i=%i  j=%i  qpatch= (%f,%f,%f,%f)\nS",ind,k_index,qpatch.x,qpatch.y,qpatch.z);
+    //                     c_number4 patchDist ={
+    //                         r.x+qpatch.x-ppatch.x,
+    //                         r.y+qpatch.y-ppatch.y,
+    //                         r.z+qpatch.z-ppatch.z,
+    //                         0.f
+    //                     };
+    //                     c_number dist = CUDA_DOT(patchDist,patchDist);
+    //                     if((patches[numPatches[pParticleColor][pi+1]][0]+patches[numPatches[qParticleColor][qj+1]][0]==0 && dist<patchyRcutSqr)){
+    //                         if((PatchLock[ind][pi][0]==-1||(PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)) && (PatchLock[k_index][qj][0]==-1||(PatchLock[k_index][qj][0]==ind && PatchLock[k_index][qj][1]==pi))){
+    //                             c_number strength = patches[numPatches[pParticleColor][pi+1]][1]+patches[numPatches[qParticleColor][qj+1]][1];
+    //                             // c_number r2b2 = dist*B2;
+    //                             // c_number r8b10 = r2b2*r2b2*r2b2*r2b2*B2;
+    //                             c_number r8b10 = dist*dist*dist*dist*invPowAlpha;
+    //                             c_number exp_part = -1.f*expf(-1.f*r8b10*dist)*strength;
+    //                             c_number4 tmp_force = patchDist*(10.f*exp_part*r8b10); //modified
+    //                             c_number4 torque = _cross(ppatch,tmp_force);
+    //                             F.w+= exp_part;
+    //                             F.x -= tmp_force.x;
+    //                             F.y -= tmp_force.y;
+    //                             F.z -= tmp_force.z;
+    //                             T.x -= torque.x;
+    //                             T.y -= torque.y;
+    //                             T.z -= torque.z;
+    //                             if(exp_part<patchLockCut){
+    //                                 if(PatchLock[ind][pi][0]==-1||PatchLock[k_index][qj][0]==-1){ // this is slow because of multiple calls but faster on big gpus like a100
+    //                                     PatchLock[ind][pi][0] = k_index;
+    //                                     PatchLock[ind][pi][1] = qj;
+    //                                     PatchLock[k_index][qj][0] = ind;
+    //                                     PatchLock[k_index][qj][1] = pi;
+    //                                 }
+    //                             }else{
+    //                                 PatchLock[ind][pi][0] = -1;
+    //                                 PatchLock[ind][pi][1] = -1;
+    //                                 PatchLock[k_index][qj][0] = -1;
+    //                                 PatchLock[k_index][qj][1] = -1;
+    //                             }
+    //                         } else if((PatchLock[ind][pi][0]==k_index && PatchLock[ind][pi][1]==qj)&&(PatchLock[k_index][qj][0]!=ind || PatchLock[k_index][qj][1]!=pi)){
+    //                             PatchLock[ind][pi][0] = -1;
+    //                             PatchLock[ind][pi][1] = -1;
+    //                             PatchLock[k_index][qj][0] = -1;
+    //                             PatchLock[k_index][qj][1] = -1;
+    //                             printf("Assymetrically locked, unlocking\n");
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }

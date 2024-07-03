@@ -25,7 +25,7 @@ steps = 1e9
 edge_n_forces = 1
 
 ### MD PARAMS ###
-dt = 0.00001
+dt = 0.001
 newtonian_steps=51
 diff_coeff=1
 thermostat=no
@@ -57,9 +57,9 @@ lastconf_file=last_conf.dat
 log_file = log.ign
 no_stdout_energy = 0
 restart_step_counter = 1
-energy_file = energS1000.ign
-print_conf_interval = 1e3
-print_energy_every = 1e3
+energy_file = energ.ign
+print_conf_interval = 1e4
+print_energy_every = 1e4
 time_scale = linear
 
 ###### CCG ################

@@ -5,7 +5,7 @@ backend = CUDA
 backend_precision = mixed
 CUDA_list = verlet
 CUDA_sort_every = 0
-use_edge = 1
+use_edge = 0
 #edge_n_forces = true
 debug = false
 #seed = 1
@@ -20,8 +20,7 @@ max_density_multiplier = 10
 T_force_value = true
 verlet_skin = 0.25
 sim_type = MD
-steps = 1
-edge_n_forces = 1
+steps = 1e8
 
 ### MD PARAMS ###
 dt = 0.0005
@@ -64,9 +63,11 @@ time_scale = linear
 ###### CCG ################
 #patchyB = 1000
 # rcut is essential for now
-rcut = 2
+rcut = 2.2
 #Kb=100
 #Kt=0
 #Ignore mass calculations/
 #mass = 0
 T=0.1
+#Ka=1000
+#Kb=200
