@@ -11,6 +11,7 @@ __constant__ float patchyCut2;
 __constant__ float patchyCut;
 __constant__ float alpha;
 __constant__ float alphaB2;
+__constant__ float SpringMultiplier;
 
 
 __device__ int strand[MAXparticles];
@@ -18,6 +19,7 @@ __device__ int connection[MAXparticles][MAXneighbour+1];
 __device__ int springParticle[MAXparticles][MAXSpringPerParticle];
 __device__ int invSpringParticle[MAXparticles][MAXSpringPerParticle];
 __device__ int patchParticle[MAXparticles][MAXPatchPerParticle+1];
+__device__ float SpringsR0[MAXparticles][MAXSpringPerParticle];
 
 
 __device__ float radius[MAXparticles];
@@ -58,6 +60,22 @@ __forceinline__ __device__ void TorqueSpring(const int &p, const int &q, const i
     T.x += torque.x;
     T.y += torque.y;
     T.z += torque.z;
+}
+
+__forceinline__ __device__ void LinearSpring(const int &p, const int &q, const int &i,const c_number4 &r, c_number4 &F, c_number4 &T){
+    c_number k,r0;
+    k= spring[springParticle[p][i]][0];
+    r0 = SpringsR0[p][i];
+    c_number rmod = sqrtf(CUDA_DOT(r,r));
+    c_number dist = rmod-r0;
+    // printf("Dist = %f\n",dist)
+    F.w+= 0.25*k*dist*dist*SpringMultiplier;
+    
+    c_number4 force = SpringMultiplier*r*(k*dist/rmod);
+    F.x += force.x;
+    F.y += force.y;
+    F.z += force.z;
+
 }
 
 __forceinline__ __device__ void repulsiveLinear(const c_number4 &r,const c_number &r2, const c_number &rmod,const c_number &totRad,c_number4 &F){
@@ -129,6 +147,13 @@ __forceinline__ __device__ void simplePatch(const int &p, const int &q, const c_
 
 __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const int *matrix_neighs,const int *number_neighs, const CUDABox *box){
     const int ind =IND;
+    // if(ind == 0){
+    //     for(int i=0;i<4;i++){
+    //         for(int j=0;j<connection[i][0];j++){
+    //             printf("i = %i j = %i R0 = %f\n",i,j,SpringsR0[i][j]);
+    //         }
+    //     }
+    // };
     if(ind >= MD_N[0]) return; // for i > N leave
     c_number4 F = forces[ind];
     c_number4 T = torques[ind];
@@ -140,7 +165,20 @@ __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_q
         int id = connection[ind][p+1];
         get_vectors_from_quat(orientations[id], b1, b2, b3);
         c_number4 r = box->minimum_image(ppos, poss[id]);
-        TorqueSpring(ind,id,p,a1,a2,a3,b1,b2,b3,r,F,T);
+        // TorqueSpring(ind,id,p,a1,a2,a3,b1,b2,b3,r,F,T);
+        // LinearSpring(ind,id,p,r,F,T);
+            const c_number k= spring[springParticle[ind][p]][0];
+            const c_number r0 = SpringsR0[ind][p];
+            c_number rmod = sqrtf(CUDA_DOT(r,r));
+            c_number dist = rmod-r0;
+            printf("ro = %f,rmod = %f, dist =%f\n",r0,rmod,dist);
+            F.w+= 0.25*k*dist*dist*SpringMultiplier;
+            
+            c_number4 tempforce = SpringMultiplier*r*(k*dist/rmod);
+            F.x += tempforce.x;
+            F.y += tempforce.y;
+            F.z += tempforce.z;
+        
     }
 
     int num_neighs = NUMBER_NEIGHBOURS(ind, number_neighs);
@@ -152,8 +190,8 @@ __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_q
         c_number r2 = CUDA_DOT(r,r);
         c_number rmod = sqrtf(r2);
         c_number totRad = radius[ind]+radius[k_index];
-        repulsiveLinear(r,r2,rmod,totRad,F);
-        simplePatch(ind,k_index,a1,a2,a3,b1,b2,b3,r,rmod,totRad,F,T);
+        // repulsiveLinear(r,r2,rmod,totRad,F);
+        // simplePatch(ind,k_index,a1,a2,a3,b1,b2,b3,r,rmod,totRad,F,T);
     }
     forces[ind] = F;
 	torques[ind] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
@@ -189,7 +227,13 @@ void CUDAPSP2Interaction::cuda_init(int N){
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(springParticle, &ParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(invSpringParticle, &invParticleSprings, sizeof(int)*MAXparticles*MAXSpringPerParticle));
     CUDA_SAFE_CALL(cudaMemcpyToSymbol(patchParticle, &ParticlePatches, sizeof(int)*MAXparticles*(MAXPatchPerParticle+1)));
-
+    CUDA_SAFE_CALL(cudaMemcpyToSymbol(SpringsR0, &SpringR0, sizeof(float)*MAXparticles*MAXSpringPerParticle));
+    // std::cout<<"Max Particles = "<<MAXparticles<<"  Max Spring Per Particles = "<<MAXSpringPerParticle<<std::endl;
+    // for(int i=0;i<4;i++){
+    //     for(int j=0;j<connection[i][0];j++){
+    //         std::cout<<"i ="<<i<<" j= "<<j<<SpringR0[i][j]<<" ";
+    //     }
+    // }
     //Singular Floats
     COPY_NUMBER_TO_FLOAT(sigma,patchySigma);
     COPY_NUMBER_TO_FLOAT(Rstar,patchyRstar);
@@ -199,6 +243,7 @@ void CUDAPSP2Interaction::cuda_init(int N){
     COPY_NUMBER_TO_FLOAT(patchyCut,patchyRcut);
     COPY_NUMBER_TO_FLOAT(alpha,patchyAlpha);
     COPY_NUMBER_TO_FLOAT(alphaB2,patchyAlphaB2);
+    COPY_NUMBER_TO_FLOAT(SpringMultiplier,springMultiplier);
 
 
 

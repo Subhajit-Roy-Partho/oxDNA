@@ -130,6 +130,12 @@ void PSP2Interaction::read_topology(int *N_strands, std::vector<BaseParticle *> 
     // int next=returnKro(0,1,&k,&r0,&rp,&rq);
     // std::cout<<k<<"\t"<<r0<<"\t rp = "<<rp.x<<" "<<rp.y<<" "<<rp.z<<"\t rq = "<<rq.x<<" "<<rq.y<<" "<<rq.z<<"\n";
     
+    // for(int i=0;i<particleNum;i++){
+    //     for(int j=0;j<connections[i][0];j++){
+    //         std::cout<<SpringR0[i][j]<<"\t";
+    //     }
+    //     std::cout<<"\n";
+    // }
 }
 
 void PSP2Interaction::check_input_sanity(std::vector<BaseParticle *> &particles) {
@@ -155,8 +161,8 @@ number PSP2Interaction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle
     if(p->strand_id==q->strand_id) return energy;
     // std::cout<<"called"<<std::endl;
     if(compute_r) _computed_r = _box->min_image(p->pos, q->pos);
-    energy += exeVol(p,q,compute_r,update_forces);
-    energy+=simplePatch(p,q,compute_r,update_forces);
+    // energy += exeVol(p,q,compute_r,update_forces);
+    // energy+=simplePatch(p,q,compute_r,update_forces);
     return energy;
 }
 
@@ -256,20 +262,34 @@ number PSP2Interaction::torqueSpring(BaseParticle *p, BaseParticle *q, bool comp
         LR_vector r = _computed_r - intCenterP + intCenterQ;
         number modr = r.module();
         number dist = modr - r0;
-        energy += 0.25*k*SQR(dist);
+        // energy += 0.25*k*SQR(dist);
+
+        // LINEAR SPRING
+        number modr2 = _computed_r.module();
+        number dist2 = modr2 - SpringR0[p->index][next-1];
+        energy += 0.25*k*SQR(dist2)*springMultiplier;
+        /////////////////
 
         if(update_forces){
-            LR_vector force = -k*dist*(r/modr);
+            LR_vector force={0,0,0};
+            // LR_vector force = -k*dist*(r/modr);
+
+            // p->torque -= p->orientationT*intCenterP.cross(force);
+            // q->torque += q->orientationT*intCenterQ.cross(force);
+
+            force -= k*dist2*(_computed_r/modr2)*springMultiplier;  //LINEAR SPRING
             p->force-=force;
             q->force+=force;
-
-            p->torque -= p->orientationT*intCenterP.cross(force);
-            q->torque += q->orientationT*intCenterQ.cross(force);
         }
     }
     return energy;
 }
 
+// number PSP2Interaction::Spring(BaseInteraction *p, BaseInteraction *q, bool compute_r, bool update_forces) {
+//     LR_vector r = _computed_r;
+//     number modr = r.module();
+//     number dist = modr - SpringR0[]
+// }
 //Common Functions
 
 bool PSP2Interaction::bonded(BaseParticle *p, BaseParticle *q) {
@@ -314,6 +334,7 @@ void PSP2Interaction::populateInvSprings() {
     for(int p=0;p<particleNum;p++){
         for(int j=0;j<connections[p][0];j++){
             int q = connections[p][j+1];
+            SpringR0[p][j]=Springs[ParticleSprings[p][j]][1]+particleRadius[p]+particleRadius[q];
             for(int i=0;i<connections[q][0];i++){
                 if(connections[q][i+1]==p){
                     invParticleSprings[p][j]=ParticleSprings[q][i];

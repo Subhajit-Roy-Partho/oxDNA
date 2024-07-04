@@ -21,7 +21,7 @@ protected:
 public:
 	number rnorm, rmod;
     int particleNum,strands,maxPatches,maxSprings; // header
-	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12;
+	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12,springMultiplier=10;
 	number patchyRcut2 = SQR(patchyRcut), patchyAlphaB2 = 1/SQR(patchyAlpha);
 	float particleRadius[MAXparticles];
 	int particleStrand[MAXparticles];
@@ -31,6 +31,8 @@ public:
 	int connections[MAXparticles][MAXneighbour+1];
 	int ParticleSprings[MAXparticles][MAXSpringPerParticle];
 	int invParticleSprings[MAXparticles][MAXSpringPerParticle];
+	float SpringR0[MAXparticles][MAXSpringPerParticle];
+
 
 
 
@@ -59,6 +61,7 @@ public:
 	// Bonded Interactions
 
 	virtual number torqueSpring(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false);
+	// virtual number Spring(BaseInteraction *p, BaseInteraction *q, bool compute_r, bool update_forces);
 
 	// Non-bonded Interactions
 	virtual number exeVol(BaseParticle *p, BaseParticle *q, bool compute_r = true, bool update_forces = false);
@@ -75,6 +78,7 @@ public:
 	// Extra Topology Functions
 
 	void populateInvSprings();
+	// void populateSpringR0();
 		
 };
 
