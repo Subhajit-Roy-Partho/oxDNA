@@ -147,13 +147,6 @@ __forceinline__ __device__ void simplePatch(const int &p, const int &q, const c_
 
 __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_quat __restrict__ *orientations, c_number4 __restrict__ *forces, c_number4 __restrict__ *torques, const int *matrix_neighs,const int *number_neighs, const CUDABox *box){
     const int ind =IND;
-    // if(ind == 0){
-    //     for(int i=0;i<4;i++){
-    //         for(int j=0;j<connection[i][0];j++){
-    //             printf("i = %i j = %i R0 = %f\n",i,j,SpringsR0[i][j]);
-    //         }
-    //     }
-    // };
     if(ind >= MD_N[0]) return; // for i > N leave
     c_number4 F = forces[ind];
     c_number4 T = torques[ind];
@@ -165,20 +158,8 @@ __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_q
         int id = connection[ind][p+1];
         get_vectors_from_quat(orientations[id], b1, b2, b3);
         c_number4 r = box->minimum_image(ppos, poss[id]);
-        // TorqueSpring(ind,id,p,a1,a2,a3,b1,b2,b3,r,F,T);
-        // LinearSpring(ind,id,p,r,F,T);
-            const c_number k= spring[springParticle[ind][p]][0];
-            const c_number r0 = SpringsR0[ind][p];
-            c_number rmod = sqrtf(CUDA_DOT(r,r));
-            c_number dist = rmod-r0;
-            printf("ro = %f,rmod = %f, dist =%f\n",r0,rmod,dist);
-            F.w+= 0.25*k*dist*dist*SpringMultiplier;
-            
-            c_number4 tempforce = SpringMultiplier*r*(k*dist/rmod);
-            F.x += tempforce.x;
-            F.y += tempforce.y;
-            F.z += tempforce.z;
-        
+        TorqueSpring(ind,id,p,a1,a2,a3,b1,b2,b3,r,F,T);
+        LinearSpring(ind,id,p,r,F,T);       
     }
 
     int num_neighs = NUMBER_NEIGHBOURS(ind, number_neighs);
@@ -190,8 +171,8 @@ __global__ void CUDAPSP2Particle(const c_number4 __restrict__ *poss, const GPU_q
         c_number r2 = CUDA_DOT(r,r);
         c_number rmod = sqrtf(r2);
         c_number totRad = radius[ind]+radius[k_index];
-        // repulsiveLinear(r,r2,rmod,totRad,F);
-        // simplePatch(ind,k_index,a1,a2,a3,b1,b2,b3,r,rmod,totRad,F,T);
+        repulsiveLinear(r,r2,rmod,totRad,F);
+        simplePatch(ind,k_index,a1,a2,a3,b1,b2,b3,r,rmod,totRad,F,T);
     }
     forces[ind] = F;
 	torques[ind] = _vectors_transpose_c_number4_product(a1, a2, a3, T);
