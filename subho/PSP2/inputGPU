@@ -21,7 +21,7 @@ T = 0.1
 T_force_value = true
 verlet_skin = 0.25
 sim_type = MD
-steps = 1e8
+steps = 1e12
 edge_n_forces = 1
 
 ### MD PARAMS ###

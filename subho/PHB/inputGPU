@@ -68,7 +68,7 @@ rcut = 2
 #Kt=0
 #Ignore mass calculations/
 #mass = 0
-T=0.1
-Ka=100
-Kb=100
-patchyAlpha=0.03
+T=0.2
+Ka=1000
+Kb=1000
+patchyAlpha=0.02
