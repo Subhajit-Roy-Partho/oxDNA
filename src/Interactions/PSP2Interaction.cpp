@@ -9,6 +9,13 @@ PSP2Interaction::~PSP2Interaction() {
 
 void PSP2Interaction::get_settings(input_file &inp) {
 	BaseInteraction::get_settings(inp);
+    if(getInputString(&inp,"SpringMultiplier",temp,0)==KEY_FOUND){
+		springMultiplier=std::stod(temp);
+	}
+    if(getInputString(&inp,"patchyAlpha",temp,0)==KEY_FOUND){
+		patchyAlpha=stod(temp);
+        patchyAlphaB2 = 1/SQR(patchyAlpha);
+    }
 }
 
 void PSP2Interaction::init() {

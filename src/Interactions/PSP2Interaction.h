@@ -21,7 +21,7 @@ protected:
 public:
 	number rnorm, rmod;
     int particleNum,strands,maxPatches,maxSprings; // header
-	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12,springMultiplier=10;
+	number patchySigma=1.0f,patchyRstar=0.9053f,patchyRc=0.99998,patchyB=667.505671539,patchyRcut=1.2,patchyAlpha=0.12,springMultiplier=2;
 	number patchyRcut2 = SQR(patchyRcut), patchyAlphaB2 = 1/SQR(patchyAlpha);
 	float particleRadius[MAXparticles];
 	int particleStrand[MAXparticles];
@@ -32,6 +32,7 @@ public:
 	int ParticleSprings[MAXparticles][MAXSpringPerParticle];
 	int invParticleSprings[MAXparticles][MAXSpringPerParticle];
 	float SpringR0[MAXparticles][MAXSpringPerParticle];
+	std::string temp;
 
 
 
