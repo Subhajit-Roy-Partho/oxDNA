@@ -284,7 +284,7 @@ __device__ c_number _patch_stacking(c_number4 &p_a1, c_number4 &q_a1, c_number4 
 }
 
 __device__ int get_monomer_type(const c_number4 &r_i) {
-	int my_btype = __float_as_int(r_i.w) >> 22;
+	int my_btype = __float_as_int(r_i.w) >> 24;
 	return my_btype > 0;
 }
 

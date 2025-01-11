@@ -232,11 +232,11 @@ void MD_CUDABackend::apply_changes_to_simulation_data() {
 		_h_particles_to_mols[i] = p->strand_id;
 
 		// convert index and type into a float
-		int msk = -1 << 22; // binary mask: all 1's and 22 0's;
+		int msk = -1 << 24; // binary mask: all 1's and 24 0's;
 		// btype has a sign, and thus has to go first
-		_h_poss[i].w = GpuUtils::int_as_float((p->btype << 22) | ((~msk) & p->index));
+		_h_poss[i].w = GpuUtils::int_as_float((p->btype << 24) | ((~msk) & p->index));
 		// we immediately check that the index and base type that we read are sensible
-		int mybtype = (GpuUtils::float_as_int(_h_poss[i].w)) >> 22;
+		int mybtype = (GpuUtils::float_as_int(_h_poss[i].w)) >> 24;
 		int myindex = (GpuUtils::float_as_int(_h_poss[i].w)) & (~msk);
 		if(p->btype != mybtype) {
 			throw oxDNAException("Could not treat the type (A, C, G, T or something specific) of particle %d; On CUDA, integer base types cannot be larger than 511 or smaller than -511");
@@ -311,7 +311,7 @@ void MD_CUDABackend::apply_simulation_data_changes() {
 		// since we may have been sorted all the particles in a different order
 		// we first take the particle index from the 4th component of its
 		// position, and then use that index to access the right BaseParticle pointer
-		int msk = (-1 << 22);
+		int msk = (-1 << 24);
 		int newindex = ((GpuUtils::float_as_int(_h_poss[i].w)) & (~msk));
 		_h_gpu_index[i] = newindex;
 		_h_cpu_index[newindex] = i;
@@ -325,7 +325,7 @@ void MD_CUDABackend::apply_simulation_data_changes() {
 		p->strand_id = _h_particles_to_mols[i];
 
 		// get index and type from the fourth component of the position
-		p->btype = (GpuUtils::float_as_int(_h_poss[i].w)) >> 22;
+		p->btype = (GpuUtils::float_as_int(_h_poss[i].w)) >> 24;
 
 		if(_h_bonds[i].n3 == P_INVALID) {
 			p->n3 = P_VIRTUAL;
