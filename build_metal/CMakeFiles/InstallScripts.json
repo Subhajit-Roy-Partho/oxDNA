@@ -1,0 +1,14 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/local/Documents/Github/oxDNA/build_metal/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/src/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/contrib/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/contrib/randisi/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/contrib/romano/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/contrib/rovigatti/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/contrib/tostiguerra/cmake_install.cmake",
+		"/Users/local/Documents/Github/oxDNA/build_metal/oxpy/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

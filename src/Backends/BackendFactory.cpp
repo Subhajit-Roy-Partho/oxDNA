@@ -21,6 +21,14 @@
 #include "../CUDA/Backends/MD_CUDAMixedBackend.h"
 #include "../CUDA/Backends/FFS_MD_CUDAMixedBackend.h"
 #endif
+#else
+// If CUDA is disabled, check for Metal backend
+#ifdef __APPLE__
+// Forward declaration to avoid including Objective-C++ headers in C++ file
+class SimBackend;
+SimBackend* create_metal_backend();
+#define HAVE_METAL
+#endif
 #endif
 
 #ifdef HAVE_MPI
@@ -78,6 +86,19 @@ std::shared_ptr<SimBackend> BackendFactory::make_backend(input_file &inp) {
 			}
 #endif
 			OX_LOG(Logger::LOG_INFO, "CUDA backend precision: %s", backend_prec.c_str());
+		}
+#endif
+#ifdef HAVE_METAL
+		else if(backend_opt == "Metal") {
+			if(precision_state == KEY_NOT_FOUND) {
+#ifdef METAL_DOUBLE_PRECISION
+				backend_prec = "double";
+#else
+				backend_prec = "float";
+#endif
+			}
+			new_backend = create_metal_backend();
+			OX_LOG(Logger::LOG_INFO, "Metal backend precision: %s", backend_prec.c_str());
 		}
 #endif
 		else {

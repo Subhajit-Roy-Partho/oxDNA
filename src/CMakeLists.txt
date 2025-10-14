@@ -316,6 +316,48 @@ IF(CUDA)
 	CUDA_ADD_EXECUTABLE(DNAnalysis ${DNAnalysis_SOURCES} Utilities/Timings.cpp)
 	
 	SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
+ELSEIF(METAL)
+	# Metal backend for macOS/Apple Silicon
+	IF(NOT APPLE)
+		MESSAGE(FATAL_ERROR "Metal backend is only available on macOS")
+	ENDIF()
+
+	# Enable Objective-C++ support
+	ENABLE_LANGUAGE(OBJCXX)
+	SET(CMAKE_OBJCXX_STANDARD 14)
+	SET(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -fobjc-arc")
+
+	# Find Metal framework
+	FIND_LIBRARY(METAL_FRAMEWORK Metal REQUIRED)
+	FIND_LIBRARY(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+	FIND_LIBRARY(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+
+	MESSAGE(STATUS "Building with Metal GPU support")
+	MESSAGE(STATUS "Metal framework: ${METAL_FRAMEWORK}")
+
+	# Metal source files
+	LIST(APPEND common_SOURCES
+		Metal/MetalUtils.mm
+		Metal/MetalBackendFactory.mm
+		Metal/Backends/MetalBaseBackend.mm
+		Metal/Backends/MD_MetalBackend.mm
+		Utilities/Timings.cpp
+	)
+
+	IF(METAL_DOUBLE)
+		ADD_DEFINITIONS(-DMETAL_DOUBLE_PRECISION)
+	ENDIF()
+
+	ADD_DEFINITIONS(-DNOCUDA)
+
+	ADD_EXECUTABLE(${exe_name} ${oxDNA_SOURCES})
+	ADD_EXECUTABLE(DNAnalysis ${DNAnalysis_SOURCES})
+	ADD_LIBRARY(${lib_name} ${common_SOURCES})
+
+	# Link Metal frameworks
+	TARGET_LINK_LIBRARIES(${lib_name} ${METAL_FRAMEWORK} ${FOUNDATION_FRAMEWORK} ${COREGRAPHICS_FRAMEWORK})
+
+	SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
 ELSE()
 	ADD_DEFINITIONS(-DNOCUDA)
 	SET(common_SOURCES
