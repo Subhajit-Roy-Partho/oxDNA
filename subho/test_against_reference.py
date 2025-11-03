@@ -176,6 +176,19 @@ def compute_all_pairwise_energies(model, positions, orientations, base_types,
             is_term_q = torch.tensor([is_terminus[j]])
 
             if is_bonded_pair:
+                # Ensure p is the 5' neighbor of q for stacking
+                p_idx, q_idx = i, j
+                if n3_neighbors[i] != j:
+                    p_idx, q_idx = j, i
+
+                # Prepare tensors for this pair in the correct 5'->3' order
+                pos_p_st = pos_t[p_idx:p_idx+1]
+                pos_q_st = pos_t[q_idx:q_idx+1]
+                orient_p_st = orient_t[p_idx:p_idx+1]
+                orient_q_st = orient_t[q_idx:q_idx+1]
+                base_p_st = base_t[p_idx:p_idx+1]
+                base_q_st = base_t[q_idx:q_idx+1]
+                
                 # Compute bonded energies
                 # FENE
                 a1_p = orient_p[0, :, 0]
@@ -191,8 +204,8 @@ def compute_all_pairwise_energies(model, positions, orientations, base_types,
                 energies_per_nuc['BEXC'][i] += bexc_energy
 
                 # Stacking
-                stck_energy = model.stacking_energy(pos_p, pos_q, orient_p, orient_q,
-                                                   base_p, base_q).item()
+                stck_energy = model.stacking_energy(pos_p_st, pos_q_st, orient_p_st, orient_q_st,
+                                                   base_p_st, base_q_st).item()
                 energies_per_nuc['STCK'][i] += stck_energy
 
             else:

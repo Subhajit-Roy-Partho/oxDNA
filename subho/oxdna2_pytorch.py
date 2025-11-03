@@ -295,6 +295,7 @@ class oxDNA2Energy(nn.Module):
 
         return energy
 
+
     def _f5(self, cosphi, a, b, xc, xs):
         """
         Modulated dihedral-like potential.
@@ -309,17 +310,24 @@ class oxDNA2Energy(nn.Module):
         """
         energy = torch.zeros_like(cosphi)
 
-        # Region 1: f < 0
-        mask1 = (cosphi >= xs) & (cosphi < 0)
-        energy[mask1] = 1.0 - a * cosphi[mask1]**2
+        # Only compute if cosphi > xc
+        mask_in_range = cosphi > xc
 
-        # Region 2: f >= 0
-        mask2 = (cosphi >= 0)
-        energy[mask2] = 1.0
+        if torch.any(mask_in_range):
+            # Smoothing region: xc < cosphi < xs
+            mask_smooth = mask_in_range & (cosphi < xs)
+            if torch.any(mask_smooth):
+                energy[mask_smooth] = b * (xc - cosphi[mask_smooth])**2
 
-        # Smoothing region
-        mask_smooth = (cosphi > xc) & (cosphi < xs)
-        energy[mask_smooth] = b * (xc - cosphi[mask_smooth])**2
+            # Main region: xs <= cosphi < 0
+            mask_main = mask_in_range & (cosphi >= xs) & (cosphi < 0)
+            if torch.any(mask_main):
+                energy[mask_main] = 1.0 - a * cosphi[mask_main]**2
+
+            # Region cosphi >= 0
+            mask_high = mask_in_range & (cosphi >= 0)
+            if torch.any(mask_high):
+                energy[mask_high] = 1.0
 
         return energy
 
@@ -469,8 +477,8 @@ class oxDNA2Energy(nn.Module):
 
         # Compute angles
         cost4 = torch.sum(a3 * b3, dim=1)  # theta4: angle between a3 and b3
-        cost5 = -torch.sum(a3 * r_stackdir.squeeze(1), dim=1)  # theta5
-        cost6 = torch.sum(b3 * r_stackdir.squeeze(1), dim=1)  # theta6
+        cost5 = torch.sum(a3 * r_stackdir.squeeze(1), dim=1)  # cost5 (will be negated in f4)
+        cost6 = -torch.sum(b3 * r_stackdir.squeeze(1), dim=1)  # cost6
         cosphi1 = torch.sum(a2 * rbackref, dim=1) / (rbackrefmod.squeeze(1) + 1e-10)
         cosphi2 = torch.sum(b2 * rbackref, dim=1) / (rbackrefmod.squeeze(1) + 1e-10)
 
@@ -489,10 +497,12 @@ class oxDNA2Energy(nn.Module):
                          STCK_THETA4_A, STCK_THETA4_B, STCK_THETA4_T0,
                          STCK_THETA4_TS, STCK_THETA4_TC)
 
-        f4_t5 = self._f4(torch.acos(torch.clamp(cost5, -1, 1)),
+        # Note: C++ uses _custom_f4(-cost5, ...) so we negate cost5
+        f4_t5 = self._f4(torch.acos(torch.clamp(-cost5, -1, 1)),
                          STCK_THETA5_A, STCK_THETA5_B, STCK_THETA5_T0,
                          STCK_THETA5_TS, STCK_THETA5_TC)
 
+        # Note: C++ uses cost6 = -b3 * rstackdir, which we already computed
         f4_t6 = self._f4(torch.acos(torch.clamp(cost6, -1, 1)),
                          STCK_THETA5_A, STCK_THETA5_B, STCK_THETA5_T0,
                          STCK_THETA5_TS, STCK_THETA5_TC)
