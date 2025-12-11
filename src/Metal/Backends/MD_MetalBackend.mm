@@ -5,6 +5,9 @@
 
 #include "MD_MetalBackend.h"
 #include "../../Utilities/oxDNAException.h"
+#include "../Lists/MetalListFactory.h"
+#include "../Interactions/MetalInteractionFactory.h"
+#include "../Thermostats/MetalThermostatFactory.h"
 
 MD_MetalBackend::MD_MetalBackend() :
     MDBackend(),
@@ -36,7 +39,10 @@ MD_MetalBackend::MD_MetalBackend() :
     _print_energy(false),
     _obs_output_error_conf(nullptr),
     _d_ext_forces(nil),
-    _max_ext_forces(0) {
+    _max_ext_forces(0),
+    _metal_list(nullptr),
+    _metal_interaction(nullptr),
+    _metal_thermostat(nullptr) {
 }
 
 MD_MetalBackend::~MD_MetalBackend() {
@@ -71,11 +77,25 @@ void MD_MetalBackend::get_settings(input_file &inp) {
     getInputBool(&inp, "use_edge", &_use_edge, 0);
     getInputBool(&inp, "Metal_avoid_cpu_calculations", &_avoid_cpu_calculations, 0);
     getInputInt(&inp, "update_st_every", &_update_st_every, 0);
-    getInputBool(&inp, "print_energy_every", &_print_energy, 0);
+    // Fixed type for print_energy_every to int but controlling boolean _print_energy
+    int print_energy_int = 0;
+    if(getInputInt(&inp, "print_energy_every", &print_energy_int, 0) == KEY_FOUND) {
+        _print_energy = (print_energy_int > 0);
+    }
 
     if(getInputString(&inp, "error_conf_file", _error_conf_file, 0) == KEY_FOUND) {
         _obs_output_error_conf = new ObservableOutput(_error_conf_file);
     }
+    
+    // Create components
+    _metal_list = MetalListFactory::make_list(inp);
+    
+    _metal_interaction = MetalInteractionFactory::make_interaction(inp);
+    
+    _metal_thermostat = MetalThermostatFactory::make_thermostat(inp);
+    // _thermostat not in SimBackend, managed manually or added to MDBackend?
+    // MDBackend has _timer_thermostat but no _thermostat pointer in base?
+    // We'll manage _metal_thermostat lifecycle here.
 }
 
 void MD_MetalBackend::init() {
@@ -89,11 +109,17 @@ void MD_MetalBackend::init() {
         _N = this->_particles.size();
 
         // Allocate host arrays
+        _h_poss = new m_number4[_N];
         _h_vels = new m_number4[_N];
         _h_Ls = new m_number4[_N];
         _h_forces = new m_number4[_N];
         _h_torques = new m_number4[_N];
-        _h_poss = new m_number4[_N];
+        
+        // 10 components per particle
+        _h_energies = new float[_N * 10]; 
+        _d_energies = MetalUtils::allocate_buffer<float>(_device, _N * 10);
+        
+        _h_particles_to_mols.resize(_N);
         _h_bonds = new MetalBonds[_N];
         _h_orientations = new m_quat[_N];
 
@@ -107,8 +133,11 @@ void MD_MetalBackend::init() {
         _d_orientations = MetalUtils::allocate_buffer<m_quat>(_device, _N);
         _d_list_poss = MetalUtils::allocate_buffer<m_number4>(_device, _N);
 
-        // Allocate box buffer
-        _d_metal_box = MetalUtils::allocate_buffer<MetalBox>(_device, 1);
+        // Initialize MetalBox from SimulationBox
+        _h_metal_box.set_Metal_from_CPU(this->_box.get());
+
+        // Allocate box buffer (using BoxData struct to match shader layout)
+        _d_metal_box = MetalUtils::allocate_buffer<MetalBox::BoxData>(_device, 1);
 
         // Initialize particle data from config
         for(int i = 0; i < _N; i++) {
@@ -129,12 +158,50 @@ void MD_MetalBackend::init() {
             _h_Ls[i].z = p->L.z;
             _h_Ls[i].w = 0.0;
 
-            // Convert orientation matrix to quaternion (simplified)
-            // TODO: Proper matrix to quaternion conversion
-            _h_orientations[i].x = 0.0;
-            _h_orientations[i].y = 0.0;
-            _h_orientations[i].z = 0.0;
-            _h_orientations[i].w = 1.0;
+            // Convert orientation matrix to quaternion
+            // p->orientationT has columns v1, v2, v3 (or rows? BaseParticle.h says orientationT is transpose)
+            // v1, v2, v3 are stored as vectors.
+            // Using standard conversion algorithm.
+            // Assuming orientationT columns are the axes.
+            LR_vector v1 = p->orientationT.v1;
+            LR_vector v2 = p->orientationT.v2;
+            LR_vector v3 = p->orientationT.v3;
+            
+            double trace = v1.x + v2.y + v3.z;
+            double qw, qx, qy, qz;
+            
+            if (trace > 0) {
+                double S = 0.5 / sqrt(trace + 1.0);
+                qw = 0.25 / S;
+                qx = (v2.z - v3.y) * S;
+                qy = (v3.x - v1.z) * S;
+                qz = (v1.y - v2.x) * S;
+            } else {
+                if (v1.x > v2.y && v1.x > v3.z) {
+                    double S = 2.0 * sqrt(1.0 + v1.x - v2.y - v3.z);
+                    qw = (v2.z - v3.y) / S;
+                    qx = 0.25 * S;
+                    qy = (v1.y + v2.x) / S;
+                    qz = (v1.z + v3.x) / S;
+                } else if (v2.y > v3.z) {
+                    double S = 2.0 * sqrt(1.0 + v2.y - v1.x - v3.z);
+                    qw = (v3.x - v1.z) / S;
+                    qx = (v1.y + v2.x) / S;
+                    qy = 0.25 * S;
+                    qz = (v2.z + v3.y) / S;
+                } else {
+                    double S = 2.0 * sqrt(1.0 + v3.z - v1.x - v2.y);
+                    qw = (v1.y - v2.x) / S;
+                    qx = (v1.z + v3.x) / S;
+                    qy = (v2.z + v3.y) / S;
+                    qz = 0.25 * S;
+                }
+            }
+            
+            _h_orientations[i].x = (m_number)qx;
+            _h_orientations[i].y = (m_number)qy;
+            _h_orientations[i].z = (m_number)qz;
+            _h_orientations[i].w = (m_number)qw;
 
             // Bonds
             _h_bonds[i].n3 = (p->n3 != P_VIRTUAL) ? p->n3->index : -1;
@@ -149,6 +216,14 @@ void MD_MetalBackend::init() {
 
         // Initialize Metal-specific symbols and constants
         _init_metal_md_symbols();
+        
+        // Initialize components
+        _metal_list->metal_init(_N, _rcut, &_h_metal_box, _d_metal_box, _device, _library);
+        _metal_interaction->metal_init(_N, _device, _library);
+        if(_metal_thermostat) _metal_thermostat->metal_init(_N, _device, _library);
+        
+        // Initial update
+        _metal_list->update(_d_poss, _d_list_poss, _d_bonds);
 
         OX_LOG(Logger::LOG_INFO, "Metal MD Backend initialized with %d particles", _N);
         OX_LOG(Logger::LOG_INFO, "Allocated GPU memory: %.2f MB", MetalUtils::get_allocated_mem_mb());
@@ -174,6 +249,19 @@ void MD_MetalBackend::_create_compute_pipelines() {
         }
         _second_step_pipeline = [_device newComputePipelineStateWithFunction:second_step_func error:&error];
         METAL_CHECK_ERROR(_second_step_pipeline, [[error localizedDescription] UTF8String]);
+        
+        // Create angular update pipelines
+        id<MTLFunction> update_L_func = [_library newFunctionWithName:@"update_angular_momenta"];
+        if(update_L_func) {
+             _update_angular_momenta_pipeline = [_device newComputePipelineStateWithFunction:update_L_func error:&error];
+             METAL_CHECK_ERROR(_update_angular_momenta_pipeline, [[error localizedDescription] UTF8String]);
+        }
+        
+        id<MTLFunction> update_q_func = [_library newFunctionWithName:@"update_orientations"];
+        if(update_q_func) {
+             _update_orientations_pipeline = [_device newComputePipelineStateWithFunction:update_q_func error:&error];
+             METAL_CHECK_ERROR(_update_orientations_pipeline, [[error localizedDescription] UTF8String]);
+        }
 
         // Create zero forces pipeline
         id<MTLFunction> zero_forces_func = [_library newFunctionWithName:@"zero_forces"];
@@ -206,6 +294,7 @@ void MD_MetalBackend::_gpu_to_host() {
     MetalUtils::copy_from_device<m_number4>(_h_Ls, _d_Ls, _N);
     MetalUtils::copy_from_device<m_number4>(_h_forces, _d_forces, _N);
     MetalUtils::copy_from_device<m_number4>(_h_torques, _d_torques, _N);
+    MetalUtils::copy_from_device<float>(_h_energies, _d_energies, _N * 10);
 
     // Update particle data
     for(int i = 0; i < _N; i++) {
@@ -310,10 +399,54 @@ void MD_MetalBackend::sim_step() {
     }
 
     // First step of integration
+    // Debug: print particle 0 info before first step
+    if(_config_info->curr_step < 5) {
+        MetalUtils::copy_from_device<m_number4>(_h_poss, _d_poss, _N);
+        MetalUtils::copy_from_device<m_number4>(_h_vels, _d_vels, _N);
+        MetalUtils::copy_from_device<m_number4>(_h_forces, _d_forces, _N);
+        printf("Step %lld - Pre-FirstStep - P0: pos=(%f,%f,%f) vel=(%f,%f,%f) force=(%f,%f,%f) dt=%f\n",
+               _config_info->curr_step,
+               (float)_h_poss[0].x, (float)_h_poss[0].y, (float)_h_poss[0].z,
+               (float)_h_vels[0].x, (float)_h_vels[0].y, (float)_h_vels[0].z,
+               (float)_h_forces[0].x, (float)_h_forces[0].y, (float)_h_forces[0].z,
+               (float)this->_dt);
+    }
+
     _first_step();
 
     // Compute forces (would call interaction kernels here)
     // TODO: Implement force computation kernels
+    // Zero forces handled in sim_step start
+    
+    // Update neighbors if needed
+    // _metal_list->update handled automatically? No, needs check.
+    // BaseList::is_updated() logic?
+    // For simple verlet, update every step or check sort?
+    // MetalSimpleVerletList has is_updated? 
+    // We'll force update for now or implement check logic later
+    _metal_list->update(_d_poss, _d_list_poss, _d_bonds); // Fixed arguments
+    
+    _metal_interaction->compute_forces(_metal_list, _d_poss, _d_orientations, _d_forces, _d_torques, _d_bonds, _d_metal_box, _d_energies);
+
+    // Log energies every 100 steps or first few steps
+    if(_config_info->curr_step < 10 || _config_info->curr_step % 100 == 0) {
+        printf("DEBUG: Copying energies. h=%p d=%p N=%d\n", _h_energies, _d_energies, _N);
+        MetalUtils::copy_from_device<m_number4>(_h_forces, _d_forces, _N);
+        
+        if(_d_energies) {
+             MetalUtils::copy_from_device<float>(_h_energies, _d_energies, _N * 10);
+        } else {
+             printf("DEBUG: _d_energies is NULL!\n");
+        }
+        
+        // Sum energies
+        double tot_energies[10] = {0.0};
+        for(int i=0; i<_N; i++) {
+             for(int k=0; k<10; k++) tot_energies[k] += _h_energies[i*10 + k];
+        }
+        printf("Step %lld Energies: FENE=%e EXCL=%e STACK=%e\n",
+              _config_info->curr_step, tot_energies[0], tot_energies[1], tot_energies[2]);
+    }
 
     // Apply thermostat if needed
     _thermalize();
@@ -326,9 +459,10 @@ void MD_MetalBackend::sim_step() {
 }
 
 void MD_MetalBackend::_thermalize() {
-    // TODO: Implement thermostats for Metal
+    if(_metal_thermostat) {
+        _metal_thermostat->apply(_d_vels, _d_Ls, _d_orientations, _d_forces, _d_torques, _d_poss);
+    }
 }
-
 void MD_MetalBackend::_apply_barostat() {
     // TODO: Implement barostat for Metal
 }

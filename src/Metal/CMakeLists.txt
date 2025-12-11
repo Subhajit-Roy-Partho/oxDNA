@@ -23,17 +23,35 @@ IF(APPLE)
     SET(METAL_SHADERS
         Shaders/common.metal
         Shaders/md_kernels.metal
+        Shaders/list_kernels.metal
+        Shaders/dna_kernels.metal
+        Shaders/thermostat_kernels.metal
     )
 
     # Compile Metal shaders to a library
-    SET(METAL_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/default.metallib)
+    SET(METAL_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/shaders.metallib)
+
+    # Find Metal compiler and linker explicitly using xcrun
+    EXECUTE_PROCESS(COMMAND xcrun -f metal OUTPUT_VARIABLE METAL_COMPILER OUTPUT_STRIP_TRAILING_WHITESPACE)
+    EXECUTE_PROCESS(COMMAND xcrun -f metallib OUTPUT_VARIABLE METALLIB_LINKER OUTPUT_STRIP_TRAILING_WHITESPACE)
+    
+    MESSAGE(STATUS "Found Metal compiler: ${METAL_COMPILER}")
+
+    IF(NOT EXISTS "${METAL_COMPILER}")
+        MESSAGE(WARNING "Metal compiler not found via xcrun. Shader compilation may fail.")
+        SET(METAL_COMPILER xcrun -sdk macosx metal)
+        SET(METALLIB_LINKER xcrun -sdk macosx metallib)
+    ENDIF()
 
     # Custom command to compile Metal shaders
     ADD_CUSTOM_COMMAND(
         OUTPUT ${METAL_LIBRARY}
-        COMMAND xcrun -sdk macosx metal -c ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/common.metal -o ${CMAKE_CURRENT_BINARY_DIR}/common.air
-        COMMAND xcrun -sdk macosx metal -c ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/md_kernels.metal -o ${CMAKE_CURRENT_BINARY_DIR}/md_kernels.air
-        COMMAND xcrun -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/common.air ${CMAKE_CURRENT_BINARY_DIR}/md_kernels.air -o ${METAL_LIBRARY}
+        COMMAND ${METAL_COMPILER} -c -I ${CMAKE_CURRENT_SOURCE_DIR}/Shaders ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/common.metal -o ${CMAKE_CURRENT_BINARY_DIR}/common.air
+        COMMAND ${METAL_COMPILER} -c -I ${CMAKE_CURRENT_SOURCE_DIR}/Shaders ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/md_kernels.metal -o ${CMAKE_CURRENT_BINARY_DIR}/md_kernels.air
+        COMMAND ${METAL_COMPILER} -c -I ${CMAKE_CURRENT_SOURCE_DIR}/Shaders ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/list_kernels.metal -o ${CMAKE_CURRENT_BINARY_DIR}/list_kernels.air
+        COMMAND ${METAL_COMPILER} -c -I ${CMAKE_CURRENT_SOURCE_DIR}/Shaders ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/dna_kernels.metal -o ${CMAKE_CURRENT_BINARY_DIR}/dna_kernels.air
+        COMMAND ${METAL_COMPILER} -c -I ${CMAKE_CURRENT_SOURCE_DIR}/Shaders ${CMAKE_CURRENT_SOURCE_DIR}/Shaders/thermostat_kernels.metal -o ${CMAKE_CURRENT_BINARY_DIR}/thermostat_kernels.air
+        COMMAND ${METALLIB_LINKER} ${CMAKE_CURRENT_BINARY_DIR}/common.air ${CMAKE_CURRENT_BINARY_DIR}/md_kernels.air ${CMAKE_CURRENT_BINARY_DIR}/list_kernels.air ${CMAKE_CURRENT_BINARY_DIR}/dna_kernels.air ${CMAKE_CURRENT_BINARY_DIR}/thermostat_kernels.air -o ${METAL_LIBRARY}
         DEPENDS ${METAL_SHADERS}
         COMMENT "Compiling Metal shaders"
         VERBATIM
@@ -54,8 +72,22 @@ IF(APPLE)
         MetalUtils.mm
         Backends/MetalBaseBackend.mm
         Backends/MD_MetalBackend.mm
+        Lists/MetalNoList.mm
+        Lists/MetalSimpleVerletList.mm
+        Lists/MetalListFactory.mm
+        Interactions/MetalBaseInteraction.mm
+        Interactions/MetalDNAInteraction.mm
+        Interactions/MetalInteractionFactory.mm
+        Thermostats/MetalBaseThermostat.mm
+        Thermostats/MetalBrownianThermostat.mm
+        Thermostats/MetalThermostatFactory.mm
+        MetalBackendFactory.mm
+        ../Utilities/Timings.cpp
         # Add more backend implementations here as needed
     )
+
+    # Prepend absolute path to source files so they can be found by the parent CMakeLists.txt
+    LIST(TRANSFORM METAL_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
     # Add Metal sources to the common library
     # Note: These will be added to the main project's common library

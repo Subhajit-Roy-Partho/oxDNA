@@ -106,7 +106,7 @@ void MetalBaseBackend::init_metal() {
         _library = [_device newDefaultLibrary];
         if (!_library) {
             // Try loading from file if default library not available
-            NSString *libraryPath = @"default.metallib";
+            NSString *libraryPath = @"shaders.metallib";
             _library = [_device newLibraryWithFile:libraryPath error:&error];
 
             if (!_library) {
@@ -151,9 +151,10 @@ void MetalBaseBackend::_host_to_gpu() {
     }
 
     // Copy box information
+    // Copy box information
     if(_d_metal_box) {
-        MetalBox *box_ptr = static_cast<MetalBox*>([_d_metal_box contents]);
-        *box_ptr = _h_metal_box;
+        MetalBox::BoxData data = _h_metal_box.get_box_data();
+        MetalUtils::copy_to_device<MetalBox::BoxData>(_d_metal_box, &data, 1);
     }
 }
 

@@ -34,6 +34,8 @@
 # Build directories
 build/
 pybuild/
+build_metal/
+build_cpu/
 cuda/
 docs/oxpy/doctrees
 venv/
@@ -78,3 +80,9 @@ cmake-build-debug
 .vscode
 oxpy/_version.py
 src/oxpy/_version.py
+
+# extra files
+*.log
+energy.dat
+last_conf.dat
+trajectory.dat

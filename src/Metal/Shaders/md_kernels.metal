@@ -85,15 +85,26 @@ kernel void update_orientations(
                                 angular_velocities[gid].y,
                                 angular_velocities[gid].z);
 
-    // Quaternion derivative: dq/dt = 0.5 * omega_quat * q
+    // Quaternion derivative: dq/dt = 0.5 * q * omega_quat (Body frame)
     m_number4 omega_quat = m_number4(omega.x, omega.y, omega.z, 0.0);
 
-    // Quaternion multiplication (simplified for omega_quat.w = 0)
+    // Quaternion multiplication q * omega
+    // Real: -v.w
+    // Vec: s*w + v x w
+    // q = (x,y,z,w). w=scalar. Note: my q struct has w at end?
+    // q.w is scalar part (based get_axes usage).
+    // q.x, q.y, q.z is vector part.
+    // omega = (Lx, Ly, Lz).
+    // dq.x = q.w * Lx + (q.y * Lz - q.z * Ly)
+    // dq.y = q.w * Ly + (q.z * Lx - q.x * Lz)
+    // dq.z = q.w * Lz + (q.x * Ly - q.y * Lx)
+    // dq.w = - (q.x * Lx + q.y * Ly + q.z * Lz)
+    
     m_number4 dq;
-    dq.x = 0.5 * (omega_quat.w * q.x + omega_quat.x * q.w + omega_quat.y * q.z - omega_quat.z * q.y);
-    dq.y = 0.5 * (omega_quat.w * q.y - omega_quat.x * q.z + omega_quat.y * q.w + omega_quat.z * q.x);
-    dq.z = 0.5 * (omega_quat.w * q.z + omega_quat.x * q.y - omega_quat.y * q.x + omega_quat.z * q.w);
-    dq.w = 0.5 * (omega_quat.w * q.w - omega_quat.x * q.x - omega_quat.y * q.y - omega_quat.z * q.z);
+    dq.x = 0.5 * (q.w * omega.x + q.y * omega.z - q.z * omega.y);
+    dq.y = 0.5 * (q.w * omega.y + q.z * omega.x - q.x * omega.z);
+    dq.z = 0.5 * (q.w * omega.z + q.x * omega.y - q.y * omega.x);
+    dq.w = -0.5 * (q.x * omega.x + q.y * omega.y + q.z * omega.z);
 
     // Update quaternion
     q += dq * dt;
@@ -101,6 +112,21 @@ kernel void update_orientations(
     // Normalize quaternion
     m_number norm = sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     orientations[gid] = q / norm;
+}
+
+/**
+ * @brief Update angular momenta (L += T * dt)
+ */
+kernel void update_angular_momenta(
+    device m_number4 *angular_momenta [[buffer(0)]],
+    device m_number4 *torques [[buffer(1)]],
+    constant m_number &dt [[buffer(2)]],
+    uint gid [[thread_position_in_grid]])
+{
+    // L += T * dt
+    angular_momenta[gid].x += torques[gid].x * dt;
+    angular_momenta[gid].y += torques[gid].y * dt;
+    angular_momenta[gid].z += torques[gid].z * dt;
 }
 
 /**

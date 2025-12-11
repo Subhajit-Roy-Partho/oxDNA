@@ -8,32 +8,18 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Precision selection
-#ifdef METAL_DOUBLE_PRECISION
-typedef double m_number;
-typedef double3 m_number3;
-typedef double4 m_number4;
-#else
-typedef float m_number;
-typedef float3 m_number3;
-typedef float4 m_number4;
-#endif
+#include "shader_utils.h"
 
-/**
- * @brief Simulation box structure
- */
-struct MetalBox {
-    m_number box_sides[3];
-    m_number inv_sides[3];
-};
-
-/**
- * @brief Bond information
- */
-struct MetalBonds {
-    int n3;
-    int n5;
-};
+// MetalBox, MetalBonds, MetalStressTensor defs removed (in shader_utils.h except StressTensor)
+// MetalStressTensor was not in shader_utils.h? Let's check.
+// I added MetalBox and MetalBonds.
+// MetalStressTensor was in `metal_defs.h` (C++).
+// common.metal had it too.
+// I didn't verify MetalStressTensor in shader_utils.h.
+// Let's check shader_utils.h content I wrote.
+// I did NOT put MetalStressTensor in shader_utils.h.
+// So I should keep MetalStressTensor here or move it.
+// Ideally move it to shader_utils.h.
 
 /**
  * @brief Stress tensor
@@ -45,24 +31,7 @@ struct MetalStressTensor {
 /**
  * @brief Minimum image convention for periodic boundary conditions
  */
-inline m_number3 minimum_image(m_number3 r, constant MetalBox &box) {
-    m_number3 result = r;
-
-    for(int i = 0; i < 3; i++) {
-        result[i] -= box.box_sides[i] * rint(result[i] * box.inv_sides[i]);
-    }
-
-    return result;
-}
-
-/**
- * @brief Calculate distance squared between two positions with PBC
- */
-inline m_number distance_sqr(m_number3 r1, m_number3 r2, constant MetalBox &box) {
-    m_number3 dr = r1 - r2;
-    dr = minimum_image(dr, box);
-    return dot(dr, dr);
-}
+// minimum_image and distance_sqr moved to shader_utils.h
 
 /**
  * @brief Safe arc cosine with clamping

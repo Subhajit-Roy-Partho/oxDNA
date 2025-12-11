@@ -1,0 +1,59 @@
+/**
+ * @file    MetalBaseInteraction.h
+ * @date    Created for Metal backend
+ * @author  antigravity
+ */
+
+#ifndef METALBASEINTERACTION_H_
+#define METALBASEINTERACTION_H_
+
+#include "../MetalUtils.h"
+#include "../Lists/MetalBaseList.h"
+#include "../metal_utils/MetalBox.h"
+#include "../metal_defs.h"
+
+// Forward declaration
+struct Metal_kernel_cfg;
+
+/**
+ * @brief Abstract class providing an interface for Metal-based interactions.
+ */
+class MetalBaseInteraction {
+protected:
+	bool _use_edge = false;
+	bool _edge_compatible = false;
+	int _n_forces = 1;
+    
+    Metal_kernel_cfg _launch_cfg;
+    
+	bool _update_st = false;
+    id<MTLBuffer> _d_st = nil;
+    
+	int _N = -1;
+    
+    id<MTLBuffer> _d_edge_forces = nil;
+    id<MTLBuffer> _d_edge_torques = nil;
+    
+    id<MTLDevice> _device;
+    id<MTLLibrary> _library;
+
+	virtual void _sum_edge_forces(id<MTLBuffer> d_forces);
+	virtual void _sum_edge_forces_torques(id<MTLBuffer> d_forces, id<MTLBuffer> d_torques);
+
+public:
+	MetalBaseInteraction();
+	virtual ~MetalBaseInteraction();
+
+	virtual void get_settings(input_file &inp) = 0;
+	virtual void get_metal_settings(input_file &inp);
+	virtual void metal_init(int N, id<MTLDevice> device, id<MTLLibrary> library);
+	virtual m_number get_metal_rcut() = 0;
+
+	virtual void compute_forces(MetalBaseList *lists, id<MTLBuffer> d_poss, id<MTLBuffer> d_orientations, id<MTLBuffer> forces, 
+                       id<MTLBuffer> torques, 
+                       id<MTLBuffer> bonds,
+                       id<MTLBuffer> metal_box,
+                       id<MTLBuffer> energies=nil) = 0;
+};
+
+#endif /* METALBASEINTERACTION_H_ */

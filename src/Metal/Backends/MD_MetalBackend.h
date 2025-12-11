@@ -14,6 +14,9 @@
 #include "MetalBaseBackend.h"
 #include "../../Backends/MDBackend.h"
 #include "../MetalUtils.h"
+#include "../Lists/MetalBaseList.h"
+#include "../Interactions/MetalBaseInteraction.h"
+#include "../Thermostats/MetalBaseThermostat.h"
 
 /**
  * @brief Manages a MD simulation on Apple GPU with Metal
@@ -32,6 +35,8 @@ protected:
     id<MTLComputePipelineState> _second_step_pipeline;
     id<MTLComputePipelineState> _forces_pipeline;
     id<MTLComputePipelineState> _zero_forces_pipeline;
+    id<MTLComputePipelineState> _update_angular_momenta_pipeline;
+    id<MTLComputePipelineState> _update_orientations_pipeline;
 
     /// Particle velocity and angular momentum buffers
     id<MTLBuffer> _d_vels;      // Linear velocities
@@ -43,6 +48,10 @@ protected:
     m_number4 *_h_Ls;
     m_number4 *_h_forces;
     m_number4 *_h_torques;
+    
+    // Debug energies
+    id<MTLBuffer> _d_energies;
+    float *_h_energies;
 
     /// Molecular information for rigid bodies
     std::vector<int> _h_particles_to_mols;
@@ -70,6 +79,11 @@ protected:
     /// External forces
     id<MTLBuffer> _d_ext_forces;
     int _max_ext_forces;
+    
+    /// Metal components
+    MetalBaseList *_metal_list;
+    MetalBaseInteraction *_metal_interaction;
+    MetalBaseThermostat *_metal_thermostat;
 
     /// Internal methods
     virtual void _gpu_to_host() override;
@@ -102,6 +116,9 @@ public:
 
     virtual void apply_simulation_data_changes() override;
     virtual void apply_changes_to_simulation_data() override;
+    
+    // Debug method
+    float *get_energies() { return _h_energies; }
 };
 
 #endif /* MD_METALBACKEND_H_ */

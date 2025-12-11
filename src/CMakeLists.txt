@@ -335,14 +335,9 @@ ELSEIF(METAL)
 	MESSAGE(STATUS "Building with Metal GPU support")
 	MESSAGE(STATUS "Metal framework: ${METAL_FRAMEWORK}")
 
-	# Metal source files
-	LIST(APPEND common_SOURCES
-		Metal/MetalUtils.mm
-		Metal/MetalBackendFactory.mm
-		Metal/Backends/MetalBaseBackend.mm
-		Metal/Backends/MD_MetalBackend.mm
-		Utilities/Timings.cpp
-	)
+	# Metal source files and configuration
+    ADD_SUBDIRECTORY(Metal)
+	LIST(APPEND common_SOURCES ${metal_common_SOURCES})
 
 	IF(METAL_DOUBLE)
 		ADD_DEFINITIONS(-DMETAL_DOUBLE_PRECISION)
@@ -355,7 +350,7 @@ ELSEIF(METAL)
 	ADD_LIBRARY(${lib_name} ${common_SOURCES})
 
 	# Link Metal frameworks
-	TARGET_LINK_LIBRARIES(${lib_name} ${METAL_FRAMEWORK} ${FOUNDATION_FRAMEWORK} ${COREGRAPHICS_FRAMEWORK})
+	TARGET_LINK_LIBRARIES(${lib_name} ${METAL_FRAMEWORKS})
 
 	SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
 ELSE()
