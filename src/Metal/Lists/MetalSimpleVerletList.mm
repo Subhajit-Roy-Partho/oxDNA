@@ -46,7 +46,8 @@ void MetalSimpleVerletList::get_settings(input_file &inp) {
 	getInputBool(&inp, "cells_auto_optimisation", &_auto_optimisation, 0);
 	getInputBool(&inp, "print_problematic_ids", &_print_problematic_ids, 0);
 	getInputNumber(&inp, "verlet_skin", &_verlet_skin, 1);
-	getInputNumber(&inp, "max_density_multiplier", &_max_density_multiplier, 0);
+	getInputFloat(&inp, "max_density_multiplier", &_max_density_multiplier, 0);
+    OX_LOG(Logger::LOG_INFO, "MetalList: max_density_multiplier set to %f", _max_density_multiplier);
 	getInputBool(&inp, "use_edge", &_use_edge, 0);
 	if(_use_edge) {
 		OX_LOG(Logger::LOG_INFO, "Using edge-based approach");
@@ -250,13 +251,18 @@ void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, 
     // _d_counters_cells is int*
     // memset via compute or simple blit?
     // Using blit for zeroing is efficient.
+    // Reset counters
+    // Debug: check positions
+    m_number4 *pdata = (m_number4*) poss.contents;
+    OX_DEBUG("Poss[0]: %f %f %f, Poss[1]: %f %f %f", pdata[0].x, pdata[0].y, pdata[0].z, pdata[1].x, pdata[1].y, pdata[1].z);
+    
+    // Directly memset on host (Shared memory) to be sure
+    memset(_d_counters_cells.contents, 0, _N_cells * sizeof(int));
+    
+    OX_DEBUG("FillCells: max_N=%d, N_cells=%d", _max_N_per_cell, _N_cells);
+
     id<MTLCommandQueue> commandQueue = [_device newCommandQueue];
-    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-    id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
-    [blitEncoder fillBuffer:_d_counters_cells range:NSMakeRange(0, _N_cells * sizeof(int)) value:0];
-    [blitEncoder endEncoding];
-    [commandBuffer commit];
-    [commandBuffer waitUntilCompleted]; // Wait for memset
+    id<MTLCommandBuffer> commandBuffer = nil;
 
     // Fill cells
     commandBuffer = [commandQueue commandBuffer];
@@ -267,18 +273,22 @@ void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, 
     [computeEncoder setBuffer:_d_cells offset:0 atIndex:1];
     [computeEncoder setBuffer:_d_counters_cells offset:0 atIndex:2];
     [computeEncoder setBuffer:_d_cell_overflow offset:0 atIndex:3];
-    [computeEncoder setBuffer:_d_metal_box offset:0 atIndex:4];
+    [computeEncoder setBuffer:_d_cell_overflow offset:0 atIndex:3];
+    // Buffer 4 key removed in kernel, args at 5
     
     struct {
+        MetalBox::BoxData box;
         int N_cells_side[3];
         int max_N_per_cell;
         int N;
     } args;
+    args.box = _h_metal_box->get_box_data();
     args.N_cells_side[0] = _N_cells_side[0];
     args.N_cells_side[1] = _N_cells_side[1];
     args.N_cells_side[2] = _N_cells_side[2];
     args.max_N_per_cell = _max_N_per_cell;
     args.N = _N;
+    
     [computeEncoder setBytes:&args length:sizeof(args) atIndex:5];
     
     [computeEncoder dispatchThreadgroups:MTLSizeMake(_cells_kernel_cfg.threadgroups_per_grid, 1, 1) threadsPerThreadgroup:MTLSizeMake(_cells_kernel_cfg.threads_per_threadgroup, 1, 1)];

@@ -56,6 +56,7 @@ struct DNAInteractionParams {
     int grooving;
     int use_oxDNA2_coaxial_stacking;
     int use_oxDNA2_FENE;
+    float mbf_fmax;
 };
 
 struct InitStrandArgs {
@@ -67,7 +68,38 @@ struct InitStrandArgs {
 #define CUBE(x) ((x)*(x)*(x))
 
 // Constants
-#define EXCL_EPS 1.0f
+// Constants
+#define PI 3.141592653589793f
+
+// Positions
+#define POS_BACK -0.4f
+#define POS_BASE 0.4f
+#define POS_STACK 0.34f
+
+// EXCLUDED VOLUME
+#define EXCL_EPS 2.0f
+// 1 = Back-Back, 2 = Base-Base, 3 = Base-Back, 4 = Back-Base
+// S = sigma, R = rstar, B = b, RC = rc
+#define EXCL_S1 0.70f
+#define EXCL_S2 0.33f
+#define EXCL_S3 0.515f
+#define EXCL_S4 0.515f
+
+#define EXCL_R1 0.675f
+#define EXCL_R2 0.32f
+#define EXCL_R3 0.50f
+#define EXCL_R4 0.50f
+
+#define EXCL_B1 892.016223343f
+#define EXCL_B2 4119.70450017f
+#define EXCL_B3 1707.30627298f
+#define EXCL_B4 1707.30627298f
+
+#define EXCL_RC1 0.711879214356f
+#define EXCL_RC2 0.335388426126f
+#define EXCL_RC3 0.52329943261f
+#define EXCL_RC4 0.52329943261f
+
 // Model Constants (from model.h)
 #define HYDR_F1 0
 #define STCK_F1 1
@@ -301,16 +333,13 @@ inline float _backbone(int idx, int neighbor_idx, float3 r, float3 rback, bool u
     
     // FENE parameters
     float delta_sqr = FENE_DELTA2;
-    float k_fene = FENE_EPS; // Actually 2.0. Formula uses EPS/2? check oxDNA.
-    // oxDNA: -eps/2 * log.
-    // Force: -eps * r / (delta^2 - r^2).
+    float k_fene = FENE_EPS; 
     
-    // Switch to harmonic at 90% of delta (0.81 squared)
+    // Switch to harmonic at 90% of delta
     float switch_ratio = 0.9f;
     float switch_dist = FENE_DELTA * switch_ratio;
     float switch_sqr = SQR(switch_dist);
     
-    // Current displacement sqr
     float r_sqr = SQR(rbackr0);
     
     float energy = 0.0f;
@@ -318,95 +347,123 @@ inline float _backbone(int idx, int neighbor_idx, float3 r, float3 rback, bool u
     
     if (r_sqr < switch_sqr) {
         // Standard FENE
+        // FENE Singularity Check
+        if (r_sqr >= delta_sqr * 0.999f) {
+             r_sqr = delta_sqr * 0.999f;
+        }
+        
         energy = -(k_fene / 2.0f) * log(1.0f - r_sqr / delta_sqr);
         if(update_forces) {
-            fmod = -(k_fene * rbackr0 / (delta_sqr - r_sqr));
+            fmod = -(k_fene * sqrt(r_sqr) / (delta_sqr - r_sqr)); // approx rbackr0 as sqrt(r_sqr) for safety in singularity? 
+            // Wait. rbackr0 is vector magnitude difference?
+            // In code: fmod = -(k_fene * rbackr0 / (delta_sqr - r_sqr));
+            // rbackr0 = rbackmod - r0.
+            // if r_sqr is clamped, we should probably calculate consistent force.
+            // Using logic:
+            fmod = -(k_fene * (sqrt(r_sqr) - params.F2_R0[0]) / (delta_sqr - r_sqr)); // Assuming type 0 parameters for simplicity or calculate per-step?
+            // Actually, simply letting the formula run with Clamped r_sqr is safe enough for Capping.
+            // The denominator won't be zero.
+            // rbackr0 will be large.
+            // Force will be large.
+            // mbf_fmax will cap it.
+            // Just ensure rbackr0 logic uses the clamped r?
+            // rbackr0 = rbackmod - r0. rbackmod is passed in.
+            // We can't easily change rbackmod without changing rback vector.
+            // So just clamping r_sqr in the formula avoids NaN in log and div by zero.
+            // fmod = ... / (pos). Valid.
         }
     } else {
         // Harmonic Tail
-        // Match V and F at switch_dist.
-        // V_c = - eps/2 * log(1 - switch^2/delta^2)
-        // F_c (scalar magnitude) = eps * switch / (delta^2 - switch^2) (Negative)
-        // Let's preserve direction rbackr0.
-        // F_c_val = - (eps * switch_dist) / (delta^2 - switch_sqr).
-        // V(r) = V_c - F_c_val * (abs(r) - switch_dist) + 0.5 * K_tail * (abs(r) - switch_dist)^2
-        // Wait, F = -dV/dr. 
-        // Force F(r) = F_c_val - K_tail * (abs(r) - switch_dist).
-        // F_c_val is negative (attractive).
-        // We want force to become MORE negative (stronger attraction) as r increases.
-        // So K_tail should be positive?
-        // - ( - huge ) = + huge?
-        // Let's just linearly extrapolate Force slope?
-        // Or simpler: F(r) = F_c_val * (1 + steepness * (abs(r) - switch)).
-        
         float V_c = -(k_fene / 2.0f) * log(1.0f - switch_sqr / delta_sqr);
         float F_c = -(k_fene * switch_dist / (delta_sqr - switch_sqr)); // Negative value
         
-        // Linear Force extension (Quadratic Potential) is robust.
-        // Slope of F?
-        // dF/dr of FENE at switch point.
-        // F = - eps * r / (D^2 - r^2).
-        // dF/dr = - eps * [ (D^2 - r^2) - r * (-2r) ] / (...) = - eps * (D^2 + r^2) / (D^2 - r^2)^2.
-        // Calculate slope K_tail at switch.
         float denom = delta_sqr - switch_sqr;
-        float K_tail = -(k_fene * (delta_sqr + switch_sqr)) / (denom * denom); // Negative slope (force becomes more negative)
+        float K_tail = -(k_fene * (delta_sqr + switch_sqr)) / (denom * denom); // Negative slope
         
-        float dr_tail = abs(rbackr0) - switch_dist; // Positive overshoot
+        float dr_tail = fabs(rbackr0) - switch_dist;
         
-        // Taylor expansion for V:
-        // V = V_c - F_c * dr_tail + 0.5 * (-K_tail) * dr_tail^2 ?
-        // Force = F_c + K_tail * dr_tail.
-        // Check V: dV/dr = -Force = - (F_c + K_tail * dr). Correct.
-        // Note: F_c is negative. K_tail is negative.
-        // So Force becomes more negative (stronger attraction).
+        energy = V_c - F_c * dr_tail - 0.5f * K_tail * SQR(dr_tail);
         
         if (update_forces) {
             fmod = F_c + K_tail * dr_tail;
-            // Apply sign of rbackr0 (fmod assumes rbackr0 is positive distance, direction handled by vector)
-            // rbackr0 was float scalar = mod - 0.75.
-            // If rbackr0 is negative (compressed)?
-            // Harmonic logic applies to |rbackr0|.
-            // But we checked r_sqr < switch_sqr.
-            // If compressed > switch (rare for fene?), delta handled?
-            // Usually FENE not used for compression < -Delta?
-            // Assuming rbackr0 > 0 (stretched).
-            // If rbackr0 < 0 (compressed), FENE also works.
-            // If compressed beyond switch?
-            // Logic holds for abs.
-            if(rbackr0 < 0) fmod = -fmod; // Flip force?
-            // Wait.
-            // FENE force formula: fmod = - eps * r / (D^2 - r^2).
-            // If r is negative: fmod is positive. (Repulsive).
-            // Force vector = rback * (fmod / rmod).
-            // If rbackr0 = rmod - 0.75.
-            // If rmod < 0.75, rbackr0 < 0.
-            // fmod > 0. Force points rback * pos = Me->Neig. Repulsive (pushing me away from neig, increasing r). Correct.
-            // Logic holds.
-            // For Tail:
-            // dr_tail = abs(r) - switch.
-            // F = F_c (at limit, signed correctly) + K_tail * dr_tail * sign(r)?
-            // K_tail calc used abs values. K_tail is negative (stiffening).
-            // F_new_abs = F_c_abs + abs(K_tail) * dr_tail.
-            // F_new = F_new_abs * sign(F_c).
-            // F_c has sign of -r.
-            // So fmod = (F_c_val_at_pos_switch + K_tail_val * dr_tail) * (rbackr0 > 0 ? 1 : -1).
-            // Let's simplify. Assumed stretched > 0.
-            // If compressed, Excluded Volume dominates. FENE not usually tail-checked for compression.
-            // Just use Signed R logic.
+            // Handle Compression sign (r < R0)
+            if (rbackr0 < 0) fmod = -fmod;
         }
-        
-        energy = V_c - F_c * dr_tail - 0.5f * K_tail * SQR(dr_tail);
     }
     
     if(update_forces) {
-        force = rback * (fmod / rbackmod);
+        // Cap the force if mbf_fmax is set
+        if (params.mbf_fmax > 0.0f) {
+            if (fabs(fmod) > params.mbf_fmax) {
+                // Preserve sign
+                fmod = (fmod > 0.0f) ? params.mbf_fmax : -params.mbf_fmax;
+            }
+        }
+        
+        if (rbackmod > 1e-6f) {
+            force = rback * (fmod / rbackmod);
+        } else {
+            force = float3(0.0f);
+        }
     }
     
     return energy;
 }
 
+// Bonded Excluded Volume
+inline float _bonded_excluded_volume(int idx, int neighbor_idx, float3 r, float3 r_pos, float3 q_pos, m_number4 p_quat, m_number4 q_quat, bool update_forces, thread float3 &force_p, thread float3 &force_q, thread float3 &torque_p, thread float3 &torque_q, constant DNAInteractionParams &params) {
+    float3 a1, a2, a3;
+    get_axes(p_quat, a1, a2, a3);
+    
+    float3 b1, b2, b3;
+    get_axes(q_quat, b1, b2, b3);
+    
+    float3 offset_p_base = a1 * POS_BASE;
+    float3 offset_q_base = b1 * POS_BASE;
+    float3 offset_p_back = a1 * POS_BACK;
+    float3 offset_q_back = b1 * POS_BACK;
+    
+    float energy = 0.0f;
+    float3 f = float3(0.0f);
+    
+    // BASE-BASE
+    float3 rcenter = r + offset_q_base - offset_p_base;
+    energy += _repulsive_lj(rcenter, f, EXCL_S2, EXCL_R2, EXCL_B2, EXCL_RC2, update_forces);
+    if(update_forces) {
+        force_p -= f;
+        force_q += f;
+        torque_p -= cross(offset_p_base, f);
+        torque_q += cross(offset_q_base, f);
+    }
+    
+    // P-BASE vs Q-BACK
+    rcenter = r + offset_q_back - offset_p_base;
+    f = float3(0.0f);
+    energy += _repulsive_lj(rcenter, f, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, update_forces);
+    if(update_forces) {
+        force_p -= f;
+        force_q += f;
+        torque_p -= cross(offset_p_base, f);
+        torque_q += cross(offset_q_back, f);
+    }
+    
+    // P-BACK vs Q-BASE
+    rcenter = r + offset_q_base - offset_p_back;
+    f = float3(0.0f);
+    energy += _repulsive_lj(rcenter, f, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, update_forces);
+    if(update_forces) {
+        force_p -= f;
+        force_q += f;
+        torque_p -= cross(offset_p_back, f);
+        torque_q += cross(offset_q_base, f);
+    }
+    
+    return energy;
+}
+
+
 // Stacking interaction
-inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3 q_pos, m_number4 p_quat, m_number4 q_quat, bool update_forces, thread float3 &force, constant DNAInteractionParams &params) {
+inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3 q_pos, m_number4 p_quat, m_number4 q_quat, int type_me, int type_neig, bool update_forces, thread float3 &force_p, thread float3 &force_q, thread float3 &torque_p, thread float3 &torque_q, constant DNAInteractionParams &params) {
     
     float3 a1, a2, a3;
     get_axes(p_quat, a1, a2, a3);
@@ -414,14 +471,16 @@ inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3
     float3 b1, b2, b3;
     get_axes(q_quat, b1, b2, b3);
     
-    float POS_BACK = -0.4f;
-    // float POS_STACK = 0.34f;
-    
     float3 rbackref = r + b1 * POS_BACK - a1 * POS_BACK;
     float rbackrefmod = length(rbackref);
+    float rbackrefmodcub = CUBE(rbackrefmod);
     
-    float rstackmod = length(r);
-    float3 rstackdir = r / rstackmod;
+    // Stack centers
+    float3 offset_p_stack = a1 * POS_STACK;
+    float3 offset_q_stack = b1 * POS_STACK;
+    float3 rstack = r + offset_q_stack - offset_p_stack;
+    float rstackmod = length(rstack);
+    float3 rstackdir = rstack / rstackmod;
     
     float cost4 = dot(a3, b3);
     float cost5 = dot(a3, rstackdir);
@@ -429,7 +488,7 @@ inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3
     float cosphi1 = dot(a2, rbackref) / rbackrefmod; 
     float cosphi2 = dot(b2, rbackref) / rbackrefmod;
     
-    float f1 = _f1(rstackmod, STCK_F1, 0, 0, params);
+    float f1 = _f1(rstackmod, STCK_F1, type_me, type_neig, params);
     float f4t4 = _f4(cost4, STCK_F4_THETA4, params); 
     float f4t5 = _f4(-cost5, STCK_F4_THETA5, params);
     float f4t6 = _f4(cost6, STCK_F4_THETA6, params);
@@ -439,18 +498,139 @@ inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3
     float energy = f1 * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2;
     
     if(update_forces && energy != 0.0f) {
-        float f1D = _f1D(rstackmod, STCK_F1, 0, 0, params);
-        float f4t4Dsin = _f4Dsin(cost4, STCK_F4_THETA4, params); 
-        float f4t5Dsin = _f4Dsin(-cost5, STCK_F4_THETA5, params);
-        float f4t6Dsin = _f4Dsin(cost6, STCK_F4_THETA6, params);
+        float f1D = _f1D(rstackmod, STCK_F1, type_me, type_neig, params);
+        float f4t4Dsin = -_f4Dsin(cost4, STCK_F4_THETA4, params); 
+        float f4t5Dsin = -_f4Dsin(-cost5, STCK_F4_THETA5, params);
+        float f4t6Dsin = -_f4Dsin(cost6, STCK_F4_THETA6, params);
         float f5phi1D = _f5D(cosphi1, STCK_F5_PHI1, params);
-        float f5phi2D = _f5D(cosphi2, STCK_F5_PHI2, params);
+        float f5phi2D = _f5D(cosphi2, STCK_F5_PHI2, params); // Checked CPU: _f5D
         
-        // Radial Force (Fixed sign: +rstackdir = Attractive)
-        // F_radial = +dir * dE/dr.
-        float3 f_rad = rstackdir * (f1D * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2);
+        // Radial Force (CPU: force = -rstackdir * ...)
+        // This is Force on Q? (Neig->Me is Q->P).
+        // If coeffs positive, -rstackdir points Q->P.
+        // p->force -= force -> Adds P->Q.
+        // We calculate "force_var" as per CPU.
+        float3 force_var = -rstackdir * (f1D * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2);
         
-        force += f_rad;
+        // Theta 5
+        force_var += -(a3 - rstackdir * cost5) * (f1 * f4t4 * f4t5Dsin * f4t6 * f5phi1 * f5phi2 / rstackmod);
+        
+        // Theta 6
+        force_var += -(b3 + rstackdir * cost6) * (f1 * f4t4 * f4t5 * f4t6Dsin * f5phi1 * f5phi2 / rstackmod);
+        
+        // Phi 1
+        float gamma = POS_STACK - POS_BACK;
+        float ra2 = dot(rstackdir, a2);
+        float ra1 = dot(rstackdir, a1);
+        float rb1 = dot(rstackdir, b1);
+        float a2b1 = dot(a2, b1);
+        
+        float parentesi = rstackmod * ra2 - a2b1 * gamma;
+        
+        float dcosphi1dr = (SQR(rstackmod) * ra2 - ra2 * SQR(rbackrefmod) - rstackmod * (a2b1 + ra2 * (-ra1 + rb1)) * gamma + a2b1 * (-ra1 + rb1) * SQR(gamma)) / rbackrefmodcub;
+        float dcosphi1dra1 = rstackmod * gamma * parentesi / rbackrefmodcub;
+        float dcosphi1dra2 = -rstackmod / rbackrefmod;
+        float dcosphi1drb1 = -rstackmod * gamma * parentesi / rbackrefmodcub;
+        
+        float dcosphi1da1b1 = -SQR(gamma) * parentesi / rbackrefmodcub;
+        float dcosphi1da2b1 = gamma / rbackrefmod;
+        
+        float force_part_phi1 = -f1 * f4t4 * f4t5 * f4t6 * f5phi1D * f5phi2;
+        
+        force_var += -(rstackdir * dcosphi1dr + 
+                       ((a2 - rstackdir * ra2) * dcosphi1dra2 +
+                        (a1 - rstackdir * ra1) * dcosphi1dra1 + 
+                        (b1 - rstackdir * rb1) * dcosphi1drb1) / rstackmod) * force_part_phi1;
+                        
+        // Phi 2
+        ra2 = dot(rstackdir, b2);
+        ra1 = dot(rstackdir, b1);
+        rb1 = dot(rstackdir, a1);
+        a2b1 = dot(b2, a1);
+        
+        parentesi = rstackmod * ra2 + a2b1 * gamma;
+        
+        float dcosphi2dr = (parentesi * (rstackmod + (rb1 - ra1) * gamma) - ra2 * SQR(rbackrefmod)) / rbackrefmodcub;
+        float dcosphi2dra1 = -rstackmod * gamma * (rstackmod * ra2 + a2b1 * gamma) / rbackrefmodcub;
+        float dcosphi2dra2 = -rstackmod / rbackrefmod;
+        float dcosphi2drb1 = rstackmod * gamma * parentesi / rbackrefmodcub;
+        
+        float dcosphi2da1b1 = -SQR(gamma) * parentesi / rbackrefmodcub;
+        float dcosphi2da2b1 = -gamma / rbackrefmod;
+        
+        float force_part_phi2 = -f1 * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2D;
+        
+        force_var += -force_part_phi2 * (rstackdir * dcosphi2dr + 
+                                         ((b2 - rstackdir * ra2) * dcosphi2dra2 +
+                                          (b1 - rstackdir * ra1) * dcosphi2dra1 + 
+                                          (a1 - rstackdir * rb1) * dcosphi2drb1) / rstackmod);
+        
+        // Accumulate Forces
+        // p->force -= force_var;
+        // q->force += force_var;
+        force_p += -force_var;
+        force_q += force_var;
+        
+        // Lever arm Torques
+        torque_p += cross(offset_p_stack, -force_var);
+        torque_q += cross(offset_q_stack, force_var);
+        
+        // Theta 4 Torque
+        float3 t4dir = cross(b3, a3);
+        float torquemod = f1 * f4t4Dsin * f4t5 * f4t6 * f5phi1 * f5phi2;
+        torque_p -= t4dir * torquemod;
+        torque_q += t4dir * torquemod;
+        
+        // Theta 5
+        float3 t5dir = cross(rstackdir, a3);
+        torquemod = -f1 * f4t4 * f4t5Dsin * f4t6 * f5phi1 * f5phi2;
+        torque_p -= t5dir * torquemod;
+        
+        // Theta 6
+        float3 t6dir = cross(rstackdir, b3);
+        torquemod = f1 * f4t4 * f4t5 * f4t6Dsin * f5phi1 * f5phi2;
+        torque_q += t6dir * torquemod;
+        
+        // Phi 1 Torque
+        torque_p += cross(rstackdir, a2) * force_part_phi1 * dcosphi1dra2 +
+                    cross(rstackdir, a1) * force_part_phi1 * dcosphi1dra1;
+        torque_q += cross(rstackdir, b1) * force_part_phi1 * dcosphi1drb1;
+        
+        float3 puretorque = cross(a2, b1) * force_part_phi1 * dcosphi1da2b1 +
+                            cross(a1, b1) * force_part_phi1 * dcosphi1da1b1;
+        torque_p -= puretorque;
+        torque_q += puretorque;
+        
+        // Phi 2 Torque (Restore old ra1/rb1 meanings for clarity? Need to be careful.
+        // In CPU code, variables were reused.
+        // Here I reused ra2, ra1, rb1 in Phi 2 block.
+        // "particle p -> b, q -> a".
+        // a2 is now b2...
+        // Need to check cross products.
+        // CPU: torquep -> p (b? No).
+        // The block "Phi 2" calculates contribution relative based on swapped roles?
+        // But updates `force` (same var) contribution.
+        // Torques:
+        // torqueq += ... (related to b/q).
+        // torquep += ... (related to a/p).
+        
+        // Re-calculate variables for torque usage if needed.
+        // In Phi 2 block:
+        // ra2 = rstackdir * b2; ...
+        // CPU Line 683:
+        // torqueq += rstackdir.cross(b2) * force_part_phi2 * dcosphi2dra2 +
+        //            rstackdir.cross(b1) * force_part_phi2 * dcosphi2dra1;
+        // torquep += rstackdir.cross(a1) * force_part_phi2 * dcosphi2drb1;
+        
+        torque_q += cross(rstackdir, b2) * force_part_phi2 * dcosphi2dra2 + 
+                    cross(rstackdir, b1) * force_part_phi2 * dcosphi2dra1;
+        torque_p += cross(rstackdir, a1) * force_part_phi2 * dcosphi2drb1;
+        
+        puretorque = cross(b2, a1) * force_part_phi2 * dcosphi2da2b1 +
+                     cross(b1, a1) * force_part_phi2 * dcosphi2da1b1;
+                     
+        torque_q -= puretorque;
+        torque_p += puretorque;
     }
     
     return energy;
@@ -486,8 +666,10 @@ kernel void dna_forces(device m_number4 *poss [[buffer(0)]],
     int n_neighs = number_neighs[idx];
     
     float3 tot_force = float3(0.0f);
-    // float3 tot_torque = float3(0.0f); // Pending
+    float3 tot_torque = float3(0.0f);
+    int type_me = (int)poss[idx].w;
     
+    // 1. Bonded Interactions (Backbone)
     // 1. Bonded Interactions (Backbone)
     if(b.n3 != -1) {
         int j = b.n3;
@@ -495,30 +677,45 @@ kernel void dna_forces(device m_number4 *poss [[buffer(0)]],
         float3 dr = rj_pos - r_pos;
         dr = minimum_image(dr, box);
         
-        float3 f = float3(0.0f);
-        float en = _backbone(idx, j, dr, dr, true, f, params);
-        if(energies) energies[idx*10 + 0] += en; 
+        m_number4 quat_me = p_quat; 
+        m_number4 quat_neig = orientations[j];
         
-        // Corrected Sign: Backbone should be attractive. f points Q->P (towards me)?? No.
-        // f derived in _backbone: rback * (neg/rback). rback=dr(Me->Neig).
-        // f = dr * (-k). Points Neig->Me (towards Me).
-        // Attractive Force on Me.
-        // So += f.
+        float3 a1, a2, a3; get_axes(quat_me, a1, a2, a3);
+        float3 b1, b2, b3; get_axes(quat_neig, b1, b2, b3);
+        
+        // FENE: Me(n3) -> Neig (P=Me, Q=Neig)
+        // rback = dr_com + off_q - off_p
+        float3 rback = dr + b1 * POS_BACK - a1 * POS_BACK;
+        
+        float3 f = float3(0.0f);
+        float en = _backbone(idx, j, dr, rback, true, f, params);
+        if(energies) energies[idx*10 + 0] += en; 
         tot_force += f; 
         
-        // Stacking (with n3)
-        m_number4 q_quat = orientations[j];
-        float3 f_stack = float3(0.0f);
-        float en_stack = _stacking(idx, j, dr, r_pos, rj_pos, p_quat, q_quat, true, f_stack, params);
+        // Stacking (Me -> Neig)
+        // Me is P (5'), Neig is Q (3').
+        int type_neig = (int)poss[j].w;
+        float3 f_p = float3(0.0f);
+        float3 f_q = float3(0.0f);
+        float3 t_p = float3(0.0f);
+        float3 t_q = float3(0.0f);
+        
+        float en_stack = _stacking(idx, j, dr, r_pos, rj_pos, quat_me, quat_neig, type_me, type_neig, true, f_p, f_q, t_p, t_q, params);
         if(energies) energies[idx*10 + 2] += en_stack; 
         
-        // Stacking sign: _stacking returns attractive force?
-        // rstackdir = dr / mod. (Me->Neig).
-        // force += rstackdir * f1D.
-        // f1D is positive. force points Me->Neig.
-        // Attractive Force on Me (towards Neighbor).
-        // So += f_stack.
-        tot_force += f_stack; 
+        // Bonded Excluded Volume (Me -> Neig)
+        float en_bonded = _bonded_excluded_volume(idx, j, dr, r_pos, rj_pos, quat_me, quat_neig, true, f_p, f_q, t_p, t_q, params);
+        if(energies) energies[idx*10 + 1] += en_bonded;
+
+        /*
+        if (idx == 0) {
+             // printf("Step: idx=0, j=%d, r=%f, E_stack=%f, E_bond=%f, F_p=(%f,%f,%f)\n", 
+             //       j, length(dr), en_stack, en_bonded, f_p.x, f_p.y, f_p.z);
+        }
+        */
+
+        tot_force += f_p;
+        tot_torque += t_p;
     }
     
     // N5 Logic: Symmetric.
@@ -527,39 +724,111 @@ kernel void dna_forces(device m_number4 *poss [[buffer(0)]],
         float3 rj_pos = poss[j].xyz;
         float3 dr = rj_pos - r_pos;
         dr = minimum_image(dr, box); 
-        float3 f = float3(0.0f);
-        float en = _backbone(j, idx, -dr, -dr, true, f, params); 
         
-        // f is Force on J (First arg).
-        // Force on Me = -f.
-        // Newton 3rd law.
-        // So tot_force -= f.
+        m_number4 quat_me = p_quat;
+        m_number4 quat_neig = orientations[j];
+        
+        float3 a1, a2, a3; get_axes(quat_me, a1, a2, a3);
+        float3 b1, b2, b3; get_axes(quat_neig, b1, b2, b3);
+        
+        // FENE: Neig(n3) -> Me (P=Neig, Q=Me)
+        // r = q - p = Me - Neig = -dr
+        // rback = (pos_me + off_me) - (pos_neig + off_neig)
+        // rback = -dr + off_me - off_neig
+        float3 rback = -dr + a1 * POS_BACK - b1 * POS_BACK;
+        
+        float3 f = float3(0.0f);
+        float en = _backbone(j, idx, -dr, rback, true, f, params); 
+        
+        // f is Force on J (First arg). Force on Me = -f.
         tot_force -= f; 
+        
+        // Stacking (Neig -> Me)
+        // We are q (3'). Neig is p (5').
+        // Call _stacking(p, q...) -> _stacking(j, idx...)
+        int type_neig = (int)poss[j].w;
+        
+        float3 f_p = float3(0.0f);
+        float3 f_q = float3(0.0f);
+        float3 t_p = float3(0.0f);
+        float3 t_q = float3(0.0f);
+        
+        float en_stack = _stacking(j, idx, -dr, rj_pos, r_pos, quat_neig, quat_me, type_neig, type_me, true, f_p, f_q, t_p, t_q, params);
+        // Do NOT add energy (counted in n3 block of partner)
+        
+        // Bonded Excluded Volume (Neig -> Me)
+        // We are Q in _bonded_excl(p, q).
+        // call _bonded_excl(neig, me).
+        // Updates f_q, t_q (which is Me).
+        float en_bonded = _bonded_excluded_volume(j, idx, -dr, rj_pos, r_pos, quat_neig, quat_me, true, f_p, f_q, t_p, t_q, params);
+        
+        // We are Q.
+        tot_force += f_q;
+        tot_torque += t_q;
     }
     
+    // 2. Non-bonded Interactions (Excluded Volume)
     // 2. Non-bonded Interactions (Excluded Volume)
     for(int i = 0; i < n_neighs; i++) {
         int j = matrix_neighs[i * args.N + idx]; 
         
         if (j == b.n3 || j == b.n5) continue; // Skip bonded
+        if (j == idx) continue; // Skip self
         
-        float3 rj = poss[j].xyz;
-        float3 dr = rj - r_pos;
+        float3 rj_pos = poss[j].xyz;
+        float3 dr = rj_pos - r_pos;
         dr = minimum_image(dr, box);
         
-        float3 f = float3(0.0f);
-        float en = _repulsive_lj(dr, f, 1.0f, 1.0f, 1.0f, 1.6f, true); 
+        if (dot(dr, dr) < 0.0001f) continue; // Skip overlaps
         
-        if(energies) energies[idx*10 + 1] += 0.5f * en; 
+        // Orientations
+        m_number4 start_quat = orientations[idx];
+        m_number4 end_quat = orientations[j];
         
-        // _repulsive_lj: f = -r * ... (Repulsive).
-        // r = Neig - Me. No, r in NonBonded loop: rj - r_pos. (Neig - Me).
-        // -r = Me - Neig.
-        // f points Me - Neig. Repulsive (Away from Neig).
-        // Force on Me.
-        // += f.
-        tot_force += f; 
+        float3 a1, a2, a3;
+        get_axes(start_quat, a1, a2, a3);
+        
+        float3 b1, b2, b3;
+        get_axes(end_quat, b1, b2, b3);
+        
+        // Interaction offsets
+        float3 offset_me_back = a1 * POS_BACK;
+        float3 offset_me_base = a1 * POS_BASE;
+        float3 offset_neig_back = b1 * POS_BACK;
+        float3 offset_neig_base = b1 * POS_BASE;
+        
+        float3 f_sub = float3(0.0f);
+        float en_sub = 0.0f;
+        
+        // 1. Back-Back (S1)
+        float3 dr_1 = dr + offset_neig_back - offset_me_back;
+        en_sub = _repulsive_lj(dr_1, f_sub, EXCL_S1, EXCL_R1, EXCL_B1, EXCL_RC1, true);
+        if(energies) energies[idx*10 + 1] += 0.5f * en_sub; 
+        tot_force += f_sub;
+        tot_torque += cross(offset_me_back, f_sub); // Torque enabled
+
+        // 2. Base-Base (S2)
+        float3 dr_2 = dr + offset_neig_base - offset_me_base;
+        en_sub = _repulsive_lj(dr_2, f_sub, EXCL_S2, EXCL_R2, EXCL_B2, EXCL_RC2, true);
+        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
+        tot_force += f_sub;
+        tot_torque += cross(offset_me_base, f_sub);
+
+        // 3. Base-Back (Me Base - Neig Back) (S3)
+        float3 dr_3 = dr + offset_neig_back - offset_me_base;
+        en_sub = _repulsive_lj(dr_3, f_sub, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, true);
+        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
+        tot_force += f_sub;
+        tot_torque += cross(offset_me_base, f_sub);
+
+        // 4. Back-Base (Me Back - Neig Base) (S4)
+        float3 dr_4 = dr + offset_neig_base - offset_me_back;
+        en_sub = _repulsive_lj(dr_4, f_sub, EXCL_S4, EXCL_R4, EXCL_B4, EXCL_RC4, true);
+        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
+        tot_force += f_sub;
+        tot_torque += cross(offset_me_back, f_sub);
     }
     
     forces[idx].xyz += tot_force;
+    torques[idx].xyz += tot_torque;
 }

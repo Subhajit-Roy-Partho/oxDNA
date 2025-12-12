@@ -19,12 +19,18 @@ dt = 0.001
 thermostat = brownian
 diff_coeff = 0.5
 newtonian_steps = 53
+max_backbone_force = 10.0
+max_density_multiplier = 20.0
+cells_auto_optimisation = 0
+use_edge = 0
+use_edge = 0
 
 steps = 2000
 # steps = 200000
 
 refresh_vel = 1
 print_conf_interval = 1000
+print_energy_every = 1
 conf_file = init.conf
 topology = init.top
 trajectory_file = trajectory.dat

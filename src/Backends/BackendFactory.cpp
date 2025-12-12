@@ -23,7 +23,7 @@
 #endif
 #else
 // If CUDA is disabled, check for Metal backend
-#ifdef __APPLE__
+#ifdef OXDNA_METAL
 // Forward declaration to avoid including Objective-C++ headers in C++ file
 class SimBackend;
 SimBackend* create_metal_backend();

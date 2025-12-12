@@ -321,6 +321,7 @@ ELSEIF(METAL)
 	IF(NOT APPLE)
 		MESSAGE(FATAL_ERROR "Metal backend is only available on macOS")
 	ENDIF()
+    ADD_DEFINITIONS(-DOXDNA_METAL)
 
 	# Enable Objective-C++ support
 	ENABLE_LANGUAGE(OBJCXX)

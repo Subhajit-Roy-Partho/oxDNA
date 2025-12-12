@@ -89,6 +89,7 @@ void MD_MetalBackend::get_settings(input_file &inp) {
     
     // Create components
     _metal_list = MetalListFactory::make_list(inp);
+    _metal_list->get_settings(inp);
     
     _metal_interaction = MetalInteractionFactory::make_interaction(inp);
     
@@ -138,6 +139,17 @@ void MD_MetalBackend::init() {
 
         // Allocate box buffer (using BoxData struct to match shader layout)
         _d_metal_box = MetalUtils::allocate_buffer<MetalBox::BoxData>(_device, 1);
+        
+        // Copy box data to GPU immediately so List init can use it
+        MetalBox::BoxData box_data = _h_metal_box.get_box_data();
+        // MetalUtils::copy_to_device(_d_metal_box, &box_data, 1);
+        // Direct memcpy to ensure data is there (Safe for Shared mode)
+        memcpy(_d_metal_box.contents, &box_data, sizeof(MetalBox::BoxData));
+        
+        // Initialize Metal List PSOs and buffers
+        
+        // Initialize Metal List PSOs and buffers
+        _metal_list->metal_init(_N, this->_interaction->get_rcut(), &_h_metal_box, _d_metal_box, _device, _library);
 
         // Initialize particle data from config
         for(int i = 0; i < _N; i++) {
@@ -146,7 +158,7 @@ void MD_MetalBackend::init() {
             _h_poss[i].x = p->pos.x;
             _h_poss[i].y = p->pos.y;
             _h_poss[i].z = p->pos.z;
-            _h_poss[i].w = 1;
+            _h_poss[i].w = (float)p->type;
 
             _h_vels[i].x = p->vel.x;
             _h_vels[i].y = p->vel.y;
@@ -284,7 +296,18 @@ void MD_MetalBackend::_host_to_gpu() {
     MetalBaseBackend::_host_to_gpu();
 
     MetalUtils::copy_to_device<m_number4>(_d_vels, _h_vels, _N);
+    MetalUtils::copy_to_device<m_number4>(_d_vels, _h_vels, _N);
     MetalUtils::copy_to_device<m_number4>(_d_Ls, _h_Ls, _N);
+    
+    // Add missing copies
+    MetalUtils::copy_to_device<m_number4>(_d_poss, _h_poss, _N);
+    MetalUtils::copy_to_device<m_quat>(_d_orientations, _h_orientations, _N);
+    MetalUtils::copy_to_device<MetalBonds>(_d_bonds, _h_bonds, _N);
+    
+    // Copy box
+    MetalBox::BoxData box_data = _h_metal_box.get_box_data();
+    printf("DEBUG: Copying box to GPU: sides [%f %f %f]\n", box_data.box_sides[0], box_data.box_sides[1], box_data.box_sides[2]);
+    MetalUtils::copy_to_device<MetalBox::BoxData>(_d_metal_box, &box_data, 1);
 }
 
 void MD_MetalBackend::_gpu_to_host() {
@@ -328,6 +351,7 @@ void MD_MetalBackend::_first_step() {
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
 
         [encoder setComputePipelineState:_first_step_pipeline];
+
 
         // Set buffers
         [encoder setBuffer:_d_poss offset:0 atIndex:0];

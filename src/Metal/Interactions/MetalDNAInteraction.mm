@@ -32,10 +32,11 @@ struct DNAInteractionParams {
     float F2_RCLOW[2];
     float F2_RCHIGH[2];
     
-    float F4_THETA_A[2];
-    float F4_THETA_B[2];
-    float F4_THETA_XC[2];
-    float F4_THETA_XS[2];
+    float F4_THETA_A[13];
+    float F4_THETA_B[13];
+    float F4_THETA_T0[13];
+    float F4_THETA_TS[13];
+    float F4_THETA_TC[13];
     
     float F5_PHI_A[4];
     float F5_PHI_B[4];
@@ -57,6 +58,7 @@ struct DNAInteractionParams {
     int grooving;
     int use_oxDNA2_coaxial_stacking;
     int use_oxDNA2_FENE;
+    float mbf_fmax;
 };
 
 MetalDNAInteraction::MetalDNAInteraction() {
@@ -186,7 +188,12 @@ void MetalDNAInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary>
     
     params->grooving = _grooving ? 1 : 0;
     params->use_oxDNA2_coaxial_stacking = _use_oxDNA2_coaxial_stacking ? 1 : 0;
-    params->use_oxDNA2_FENE = _use_oxDNA2_FENE ? 1 : 0;
+    params->use_oxDNA2_FENE = this->_use_oxDNA2_FENE;
+    
+    // Copy Max Backbone Force
+    params->mbf_fmax = this->_mbf_fmax;
+    // Note: _mbf_fmax is protected in DNAInteraction. Need to ensure access.
+    // MetalDNAInteraction inherits public DNAInteraction, so it should be fine.
     
     // PSOs
     NSError *error = nil;

@@ -8,6 +8,7 @@
 using namespace metal;
 
 struct FillCellsArgs {
+    MetalBox box;
     int N_cells_side[3];
     int max_N_per_cell;
     int N;
@@ -49,14 +50,13 @@ kernel void fill_cells(device m_number4 *poss [[buffer(0)]],
                        device int *cells [[buffer(1)]],
                        device atomic_int *counters_cells [[buffer(2)]],
                        device bool *cell_overflow [[buffer(3)]],
-                       constant MetalBox &box [[buffer(4)]],
                        constant FillCellsArgs &args [[buffer(5)]],
                        uint2 tid [[thread_position_in_grid]]) {
     int idx = tid.x;
     if(idx >= args.N) return;
     
     m_number4 r = poss[idx];
-    int index = compute_cell_index(args.N_cells_side, r, box);
+    int index = compute_cell_index(args.N_cells_side, r, args.box);
     
     int cell_idx = atomic_fetch_add_explicit(&counters_cells[index], 1, memory_order_relaxed);
     

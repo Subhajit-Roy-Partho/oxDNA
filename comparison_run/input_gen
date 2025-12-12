@@ -1,0 +1,9 @@
+box_type = orthogonal
+box_size = 20
+step_amplitude = 0.5
+N = 2
+topology = topology.top
+particle_type = DNA2
+energy_file = /dev/null
+trajectory_file = configuration.dat
+conf_file = /dev/null

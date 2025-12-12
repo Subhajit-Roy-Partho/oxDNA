@@ -21,8 +21,8 @@ kernel void first_step_velocity_verlet(
     constant MetalBox &box [[buffer(5)]],
     uint gid [[thread_position_in_grid]])
 {
-    // Get mass from w component of position
-    m_number mass = positions[gid].w;
+    // Get mass (Assuming mass=1.0 for now, as w contains type)
+    m_number mass = 1.0;
     m_number inv_mass = 1.0 / mass;
 
     // v += F * dt / (2m)
@@ -58,7 +58,7 @@ kernel void second_step_velocity_verlet(
     constant m_number &dt_half [[buffer(3)]],
     uint gid [[thread_position_in_grid]])
 {
-    m_number mass = positions[gid].w;
+    m_number mass = 1.0;
     m_number inv_mass = 1.0 / mass;
 
     // v += F * dt / (2m)
