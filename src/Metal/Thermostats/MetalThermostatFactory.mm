@@ -16,7 +16,7 @@ MetalBaseThermostat* MetalThermostatFactory::make_thermostat(input_file &inp) {
 		throw oxDNAException("Cannot search for thermostat in input_file");
 	}
 
-	if(thermostat_type.compare("brownian") == 0) {
+	if(thermostat_type.compare("brownian") == 0 || thermostat_type.compare("john") == 0) {
 		return new MetalBrownianThermostat();
 	}
     // else if(thermostat_type.compare("langevin") == 0) {

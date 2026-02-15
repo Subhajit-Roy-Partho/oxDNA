@@ -5,6 +5,7 @@
  */
 
 #include "MetalDNAInteraction.h"
+#include "MetalCPUForceFallback.h"
 #include "../Lists/MetalSimpleVerletList.h"
 #include "../Lists/MetalNoList.h" 
 
@@ -198,10 +199,14 @@ void MetalDNAInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary>
     // PSOs
     NSError *error = nil;
     _dna_forces_pso = [_device newComputePipelineStateWithFunction:[_library newFunctionWithName:@"dna_forces"] error:&error];
-    if(!_dna_forces_pso) printf("Error creating dna_forces PSO: %s\n", [[error localizedDescription] UTF8String]);
+    if(!_dna_forces_pso) {
+        throw oxDNAException("Failed creating dna_forces pipeline: %s", [[error localizedDescription] UTF8String]);
+    }
     
     _init_DNA_strand_ends_pso = [_device newComputePipelineStateWithFunction:[_library newFunctionWithName:@"init_DNA_strand_ends"] error:&error];
-    if(!_init_DNA_strand_ends_pso) printf("Error creating init_DNA_strand_ends PSO: %s\n", [[error localizedDescription] UTF8String]);
+    if(!_init_DNA_strand_ends_pso) {
+        throw oxDNAException("Failed creating init_DNA_strand_ends pipeline: %s", [[error localizedDescription] UTF8String]);
+    }
     
     // Allocate init args (N)
     struct InitStrandArgs { int N; };
@@ -240,6 +245,11 @@ void MetalDNAInteraction::_init_strand_ends(id<MTLBuffer> d_bonds) {
 }
 
 void MetalDNAInteraction::compute_forces(MetalBaseList *lists, id<MTLBuffer> d_poss, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_bonds, id<MTLBuffer> d_box, id<MTLBuffer> d_energies) {
+    if(_use_cpu_fallback) {
+        MetalCPUForceFallback::compute(_N, d_poss, d_orientations, d_forces, d_torques, d_energies);
+        return;
+    }
+
     if(!_d_is_strand_end) _init_strand_ends(d_bonds);
 
     // Check if pipelines are ready

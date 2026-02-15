@@ -23,6 +23,8 @@ protected:
 	bool _use_edge = false;
 	bool _edge_compatible = false;
 	int _n_forces = 1;
+	bool _avoid_cpu_calculations = false;
+	bool _use_cpu_fallback = true;
     
     Metal_kernel_cfg _launch_cfg;
     
@@ -54,6 +56,14 @@ public:
                        id<MTLBuffer> bonds,
                        id<MTLBuffer> metal_box,
                        id<MTLBuffer> energies=nil) = 0;
+
+	bool use_cpu_fallback() const {
+		return _use_cpu_fallback;
+	}
+
+	bool avoid_cpu_calculations() const {
+		return _avoid_cpu_calculations;
+	}
 };
 
 #endif /* METALBASEINTERACTION_H_ */

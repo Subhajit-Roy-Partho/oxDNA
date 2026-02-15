@@ -1174,13 +1174,6 @@ number DNAInteraction::pair_interaction(BaseParticle *p, BaseParticle *q, bool c
 	}
 }
 
-#include "../Utilities/ConfigInfo.h"
-
-static long long last_step = -1;
-static double tot_fene = 0;
-static double tot_stack = 0;
-static double tot_excl = 0;
-
 number DNAInteraction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q, bool compute_r, bool update_forces) {
 	if(compute_r && (q != P_VIRTUAL && p != P_VIRTUAL)) {
 		_computed_r = q->pos - p->pos;
@@ -1189,29 +1182,10 @@ number DNAInteraction::pair_interaction_bonded(BaseParticle *p, BaseParticle *q,
 	if(!_check_bonded_neighbour(&p, &q, false)) {
 		return (number) 0;
 	}
-    
-    // Reset and Print on step change
-    // Using a simple heuristic: if step changed, print PREVIOUS sums (if not first step) and reset.
-    // Note: This prints at the START of the NEXT step force computation.
-    // For comparison with Metal (which prints 'Step X Energies'), this is fine.
-    long long step = CONFIG_INFO->curr_step;
-    if(step != last_step) {
-        if(last_step != -1) {
-             printf("Step %lld Energies: FENE=%e EXCL=%e STACK=%e\n", last_step, tot_fene, tot_excl, tot_stack);
-        }
-        last_step = step;
-        tot_fene = 0;
-        tot_stack = 0;
-        tot_excl = 0;
-    }
 
 	number en_back = _backbone(p, q, false, update_forces);
 	number en_exc = _bonded_excluded_volume(p, q, false, update_forces);
 	number en_stack = _stacking(p, q, false, update_forces);
-
-    tot_fene += en_back;
-    tot_excl += en_exc;
-    tot_stack += en_stack;
 
 	number energy = en_back + en_exc + en_stack;
 
@@ -1228,20 +1202,7 @@ number DNAInteraction::pair_interaction_nonbonded(BaseParticle *p, BaseParticle 
 	}
 
 	number en_exc = _nonbonded_excluded_volume(p, q, false, update_forces);
-    tot_excl += 0.5 * en_exc; // Non-bonded is double counted in loop usually? 
-    // Wait, pair_interaction_nonbonded is called by verlet list loop. 
-    // Usually lists avoid double counting (i<j). 
-    // If so, 0.5 is NOT needed.
-    // Metal implementation: "energies[idx*10 + 1] += 0.5f * en;" for non-bonded.
-    // Because in Metal each particle iterates neighbors? 
-    // In Metal: "for(int i = 0; i < n_neighs; i++)". 
-    // Yes, Metal iterates all neighbors for EACH particle, effectively double counting total energy sums if we sum over all particles.
-    // Hence 0.5 in Metal logging is correct for total system energy.
-    // In CPU: Check Lists/Cells.cpp. Usually loops unique pairs.
-    // BaseInteraction::compute_forces loops over lists.
-    // List implementations usually store pairs (i, j) once.
-    // So NO 0.5 factor here.
-    
+
 	number energy = en_exc;
 	energy += _hydrogen_bonding(p, q, false, update_forces);
 	energy += _cross_stacking(p, q, false, update_forces);

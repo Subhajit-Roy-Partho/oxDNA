@@ -76,7 +76,12 @@ IF(APPLE)
         Lists/MetalSimpleVerletList.mm
         Lists/MetalListFactory.mm
         Interactions/MetalBaseInteraction.mm
+        Interactions/MetalCPUForceFallback.mm
         Interactions/MetalDNAInteraction.mm
+        Interactions/MetalLJInteraction.mm
+        Interactions/MetalRNAInteraction.mm
+        Interactions/MetalPatchyInteraction.mm
+        Interactions/MetalTEPInteraction.mm
         Interactions/MetalInteractionFactory.mm
         Thermostats/MetalBaseThermostat.mm
         Thermostats/MetalBrownianThermostat.mm

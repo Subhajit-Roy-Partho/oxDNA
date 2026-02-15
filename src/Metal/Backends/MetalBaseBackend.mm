@@ -105,14 +105,37 @@ void MetalBaseBackend::init_metal() {
         NSError *error = nil;
         _library = [_device newDefaultLibrary];
         if (!_library) {
-            // Try loading from file if default library not available
-            NSString *libraryPath = @"shaders.metallib";
-            _library = [_device newLibraryWithFile:libraryPath error:&error];
+            NSMutableArray<NSString *> *candidatePaths = [NSMutableArray array];
 
-            if (!_library) {
-                throw oxDNAException("Failed to load Metal shader library: %s",
-                                   [[error localizedDescription] UTF8String]);
+            NSArray<NSString *> *args = [[NSProcessInfo processInfo] arguments];
+            if(args.count > 0) {
+                NSString *execPath = args[0];
+                if(execPath.length > 0) {
+                    NSString *execDir = [execPath stringByDeletingLastPathComponent];
+                    if(execDir.length > 0) {
+                        [candidatePaths addObject:[execDir stringByAppendingPathComponent:@"shaders.metallib"]];
+                    }
+                }
             }
+
+            NSString *cwdPath = [[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"shaders.metallib"];
+            [candidatePaths addObject:cwdPath];
+
+            NSFileManager *fm = [NSFileManager defaultManager];
+            for(NSString *candidate in candidatePaths) {
+                if([fm fileExistsAtPath:candidate]) {
+                    _library = [_device newLibraryWithFile:candidate error:&error];
+                    if(_library) {
+                        OX_LOG(Logger::LOG_INFO, "Loaded Metal shader library from %s", [candidate UTF8String]);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if(!_library) {
+            const char *err = (error != nil) ? [[error localizedDescription] UTF8String] : "unknown error";
+            throw oxDNAException("Failed to load Metal shader library (tried default/executable-dir/cwd): %s", err);
         }
 
         OX_LOG(Logger::LOG_INFO, "Metal backend initialized successfully");

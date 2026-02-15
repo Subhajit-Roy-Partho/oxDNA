@@ -22,6 +22,9 @@ MetalBaseInteraction::~MetalBaseInteraction() {
 }
 
 void MetalBaseInteraction::get_metal_settings(input_file &inp) {
+	getInputBool(&inp, "Metal_avoid_cpu_calculations", &_avoid_cpu_calculations, 0);
+	_use_cpu_fallback = !_avoid_cpu_calculations;
+
 	int update_st_every = 0;
 	getInputInt(&inp, "Metal_update_stress_tensor_every", &update_st_every, 0);
 	if(update_st_every > 0) {

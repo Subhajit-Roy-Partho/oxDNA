@@ -12,59 +12,111 @@ using namespace metal;
 /**
  * @brief Update particle velocities (first half of velocity Verlet)
  */
+inline m_number4 quat_multiply_md(m_number4 a, m_number4 b) {
+    return m_number4(
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    );
+}
+
+inline m_number4 update_orientation_from_L(m_number4 L, m_number4 old_orientation, m_number dt) {
+    m_number3 Lvec = L.xyz;
+    m_number norm = length(Lvec);
+    if(norm <= (m_number) 1e-12f) {
+        return old_orientation;
+    }
+
+    m_number3 axis = Lvec / norm;
+    m_number half_theta = dt * norm * (m_number) 0.5f;
+    m_number s = sin(half_theta);
+    m_number c = cos(half_theta);
+
+    m_number4 R = m_number4(axis.x * s, axis.y * s, axis.z * s, c);
+    m_number4 updated = quat_multiply_md(old_orientation, R);
+
+    m_number qnorm = length(updated);
+    if(qnorm <= (m_number) 1e-12f) {
+        return old_orientation;
+    }
+    return updated / qnorm;
+}
+
 kernel void first_step_velocity_verlet(
     device m_number4 *positions [[buffer(0)]],
-    device m_number4 *velocities [[buffer(1)]],
-    device m_number4 *forces [[buffer(2)]],
-    constant m_number &dt [[buffer(3)]],
-    constant m_number &dt_half [[buffer(4)]],
-    constant MetalBox &box [[buffer(5)]],
+    device m_number4 *orientations [[buffer(1)]],
+    device m_number4 *velocities [[buffer(2)]],
+    device m_number4 *angular_momenta [[buffer(3)]],
+    device m_number4 *forces [[buffer(4)]],
+    device m_number4 *torques [[buffer(5)]],
+    constant MetalBox &box [[buffer(6)]],
+    constant m_number &dt [[buffer(7)]],
+    constant m_number &dt_half [[buffer(8)]],
+    constant int &N [[buffer(9)]],
     uint gid [[thread_position_in_grid]])
 {
-    // Get mass (Assuming mass=1.0 for now, as w contains type)
-    m_number mass = 1.0;
-    m_number inv_mass = 1.0 / mass;
+    if((int) gid >= N) {
+        return;
+    }
 
     // v += F * dt / (2m)
-    velocities[gid].x += forces[gid].x * dt_half * inv_mass;
-    velocities[gid].y += forces[gid].y * dt_half * inv_mass;
-    velocities[gid].z += forces[gid].z * dt_half * inv_mass;
+    m_number4 v = velocities[gid];
+    const m_number4 F = forces[gid];
+    v.x += F.x * dt_half;
+    v.y += F.y * dt_half;
+    v.z += F.z * dt_half;
 
     // r += v * dt
-    positions[gid].x += velocities[gid].x * dt;
-    positions[gid].y += velocities[gid].y * dt;
-    positions[gid].z += velocities[gid].z * dt;
+    m_number4 r = positions[gid];
+    r.x += v.x * dt;
+    r.y += v.y * dt;
+    r.z += v.z * dt;
 
-    // Apply periodic boundary conditions
-    for(int i = 0; i < 3; i++) {
-        m_number pos_component = (i == 0) ? positions[gid].x :
-                                 (i == 1) ? positions[gid].y :
-                                            positions[gid].z;
-        pos_component -= box.box_sides[i] * rint(pos_component * box.inv_sides[i]);
+    m_number4 L = angular_momenta[gid];
+    const m_number4 T = torques[gid];
+    L.x += T.x * dt_half;
+    L.y += T.y * dt_half;
+    L.z += T.z * dt_half;
 
-        if(i == 0) positions[gid].x = pos_component;
-        else if(i == 1) positions[gid].y = pos_component;
-        else positions[gid].z = pos_component;
-    }
+    positions[gid] = r;
+    velocities[gid] = v;
+    angular_momenta[gid] = L;
+    orientations[gid] = update_orientation_from_L(L, orientations[gid], dt);
 }
 
 /**
  * @brief Update velocities (second half of velocity Verlet)
  */
 kernel void second_step_velocity_verlet(
-    device m_number4 *positions [[buffer(0)]],
-    device m_number4 *velocities [[buffer(1)]],
+    device m_number4 *velocities [[buffer(0)]],
+    device m_number4 *angular_momenta [[buffer(1)]],
     device m_number4 *forces [[buffer(2)]],
-    constant m_number &dt_half [[buffer(3)]],
+    device m_number4 *torques [[buffer(3)]],
+    constant m_number &dt_half [[buffer(4)]],
+    constant int &N [[buffer(5)]],
     uint gid [[thread_position_in_grid]])
 {
-    m_number mass = 1.0;
-    m_number inv_mass = 1.0 / mass;
+    if((int) gid >= N) {
+        return;
+    }
 
     // v += F * dt / (2m)
-    velocities[gid].x += forces[gid].x * dt_half * inv_mass;
-    velocities[gid].y += forces[gid].y * dt_half * inv_mass;
-    velocities[gid].z += forces[gid].z * dt_half * inv_mass;
+    m_number4 v = velocities[gid];
+    m_number4 F = forces[gid];
+    v.x += F.x * dt_half;
+    v.y += F.y * dt_half;
+    v.z += F.z * dt_half;
+    v.w = (v.x * v.x + v.y * v.y + v.z * v.z) * (m_number) 0.5f;
+    velocities[gid] = v;
+
+    m_number4 L = angular_momenta[gid];
+    m_number4 T = torques[gid];
+    L.x += T.x * dt_half;
+    L.y += T.y * dt_half;
+    L.z += T.z * dt_half;
+    L.w = (L.x * L.x + L.y * L.y + L.z * L.z) * (m_number) 0.5f;
+    angular_momenta[gid] = L;
 }
 
 /**

@@ -35,6 +35,7 @@ protected:
     id<MTLComputePipelineState> _second_step_pipeline;
     id<MTLComputePipelineState> _forces_pipeline;
     id<MTLComputePipelineState> _zero_forces_pipeline;
+    id<MTLComputePipelineState> _zero_torques_pipeline;
     id<MTLComputePipelineState> _update_angular_momenta_pipeline;
     id<MTLComputePipelineState> _update_orientations_pipeline;
 
@@ -104,6 +105,9 @@ protected:
 
     virtual void _init_metal_md_symbols();
     virtual void _create_compute_pipelines();
+    virtual void _update_host_buffers_from_particles();
+    virtual void _update_particles_from_host_buffers();
+    virtual void _zero_force_and_torque_buffers();
 
 public:
     MD_MetalBackend();
