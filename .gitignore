@@ -37,6 +37,7 @@ pybuild/
 cuda/
 docs/oxpy/doctrees
 venv/
+.venv/
 
 test/**/*energy*.dat
 test/**/last_conf.dat

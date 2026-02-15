@@ -132,8 +132,8 @@ def compute_all_pairwise_energies(model, positions, orientations, base_types,
     """
     Compute all energy components for each nucleotide.
 
-    Energy is accumulated per nucleotide (counting each pairwise interaction once,
-    attributed to the lower-indexed nucleotide).
+    Energy is accumulated per nucleotide with split accounting:
+    each pairwise interaction contributes half to each nucleotide.
     """
     n = len(positions)
 
@@ -175,6 +175,11 @@ def compute_all_pairwise_energies(model, positions, orientations, base_types,
             is_term_p = torch.tensor([is_terminus[i]])
             is_term_q = torch.tensor([is_terminus[j]])
 
+            def add_split(term, value):
+                half = 0.5 * value
+                energies_per_nuc[term][i] += half
+                energies_per_nuc[term][j] += half
+
             if is_bonded_pair:
                 # Ensure p is the 5' neighbor of q for stacking
                 p_idx, q_idx = i, j
@@ -191,46 +196,44 @@ def compute_all_pairwise_energies(model, positions, orientations, base_types,
                 
                 # Compute bonded energies
                 # FENE
-                a1_p = orient_p[0, :, 0]
-                a1_q = orient_q[0, :, 0]
-                back_p = pos_p[0] + a1_p * (-0.4)  # POS_BACK
-                back_q = pos_q[0] + a1_q * (-0.4)
+                back_p = model._backbone_site(pos_p, orient_p)[0]
+                back_q = model._backbone_site(pos_q, orient_q)[0]
                 r_backbone = torch.norm(back_q - back_p)
                 fene_energy = model.backbone_energy(r_backbone.unsqueeze(0)).item()
-                energies_per_nuc['FENE'][i] += fene_energy
+                add_split('FENE', fene_energy)
 
                 # Bonded excluded volume
                 bexc_energy = model.bonded_excluded_volume(pos_p, pos_q, orient_p, orient_q).item()
-                energies_per_nuc['BEXC'][i] += bexc_energy
+                add_split('BEXC', bexc_energy)
 
                 # Stacking
                 stck_energy = model.stacking_energy(pos_p_st, pos_q_st, orient_p_st, orient_q_st,
                                                    base_p_st, base_q_st).item()
-                energies_per_nuc['STCK'][i] += stck_energy
+                add_split('STCK', stck_energy)
 
             else:
                 # Compute non-bonded energies
                 # Non-bonded excluded volume
                 nexc_energy = model.nonbonded_excluded_volume(pos_p, pos_q, orient_p, orient_q).item()
-                energies_per_nuc['NEXC'][i] += nexc_energy
+                add_split('NEXC', nexc_energy)
 
                 # Hydrogen bonding
                 hb_energy = model.hydrogen_bonding_energy(pos_p, pos_q, orient_p, orient_q,
                                                          base_p, base_q).item()
-                energies_per_nuc['HB'][i] += hb_energy
+                add_split('HB', hb_energy)
 
                 # Cross-stacking
                 crstck_energy = model.cross_stacking_energy(pos_p, pos_q, orient_p, orient_q).item()
-                energies_per_nuc['CRSTCK'][i] += crstck_energy
+                add_split('CRSTCK', crstck_energy)
 
                 # Coaxial stacking
                 cxstck_energy = model.coaxial_stacking_energy(pos_p, pos_q, orient_p, orient_q).item()
-                energies_per_nuc['CXSTCK'][i] += cxstck_energy
+                add_split('CXSTCK', cxstck_energy)
 
             # Debye-Huckel (all non-bonded pairs)
             dh_energy = model.debye_huckel_energy(pos_p, pos_q, orient_p, orient_q,
                                                  is_bonded_t, is_term_p, is_term_q).item()
-            energies_per_nuc['DH'][i] += dh_energy
+            add_split('DH', dh_energy)
 
     # Compute total
     for key in ['FENE', 'BEXC', 'STCK', 'NEXC', 'HB', 'CRSTCK', 'CXSTCK', 'DH']:
