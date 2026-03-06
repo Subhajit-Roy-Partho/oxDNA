@@ -1,6 +1,6 @@
 # oxDNA
 
-oxDNA is a simulation code that was initially conceived as an implementation of the coarse-grained DNA model introduced by [T. E. Ouldridge, J. P. K. Doye and A. A. Louis](http://dx.doi.org/10.1063/1.3552946). It has been since reworked and it is now an extensible simulation+analysis framework. It natively supports DNA, RNA, Lennard-Jones and patchy particle simulations of different kinds on both single CPU cores and NVIDIA GPUs.
+oxDNA is a simulation code that was initially conceived as an implementation of the coarse-grained DNA model introduced by [T. E. Ouldridge, J. P. K. Doye and A. A. Louis](http://dx.doi.org/10.1063/1.3552946). It has been since reworked and it is now an extensible simulation+analysis framework. It natively supports DNA, RNA, Lennard-Jones and patchy particle simulations of different kinds on single CPU cores, NVIDIA GPUs through CUDA, and AMD GPUs through ROCm/HIP.
 
 The development of this software has been partially supported by the European Commission through the Marie Skłodowska−Curie Fellowship No.702298-DELTAS, and ONR grant N000142012094.
 
@@ -14,11 +14,72 @@ The HTML documentation can also be generated locally by running `make html` in t
 
 Installation instructions can be found in the `docs/source/install.md` file or online [here](https://lorenzo-rovigatti.github.io/oxDNA/install.html).
 
+### ROCm/HIP backend
+
+The repository now includes a ROCm backend in `src/ROCM` mirroring the CUDA implementation. The main validated force fields are `DNA` (oxDNA1) and `DNA2` (oxDNA2).
+
+A typical ROCm build is:
+
+```bash
+cmake -S . -B build-rocm \
+  -DROCM=ON \
+  -DCUDA=OFF \
+  -DNATIVE_COMPILATION=OFF
+cmake --build build-rocm -j
+```
+
+For MI200-class GPUs, explicitly setting the HIP target can be useful:
+
+```bash
+cmake -S . -B build-rocm \
+  -DROCM=ON \
+  -DCUDA=OFF \
+  -DCMAKE_HIP_ARCHITECTURES=gfx90a
+```
+
+If your environment points `CC`/`CXX` to Conda-managed compilers, you may need to select a ROCm-compatible system toolchain explicitly, for example:
+
+```bash
+cmake -S . -B build-rocm \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
+  -DROCM=ON \
+  -DCUDA=OFF
+```
+
+At runtime, use `backend = ROCM`. The ROCm backend accepts:
+
+- `backend_precision = mixed|float|double` depending on how the code was compiled
+- `ROCM_device = <int>`
+- `ROCM_sort_every = <int>`
+- `ROCM_list = verlet|no|bin_verlet`
+
+The legacy `CUDA_device`, `CUDA_sort_every`, and `CUDA_list` keys are also accepted as compatibility aliases when `backend = ROCM`.
+
+Current ROCm limitation: the `no`, `john`/`brownian`, and `langevin` thermostats are supported, while `bussi` and `srd` are not yet implemented on the ROCm backend.
+
 ## Examples
 
 The `examples` folder contains many examples showing the main features of the code. Note that the `METADYNAMICS`, `OXPY` and `OXPY_REMD` examples require `oxpy`, oxDNA's python bindings that can be compiled by setting `-DPython=ON` during the [compilation stage](https://lorenzo-rovigatti.github.io/oxDNA/install.html#cmake-options).
 
 The `analysis/paper_examples` folder contains examples for `oxDNA_analysis_tools`, a suite of command line Python tools for performing generic structural analyses of oxDNA simulations.
+
+## ROCm tests
+
+ROCm regression inputs live in `test/ROCM` and cover:
+
+- oxDNA1 on `DNA/DSDNA8`
+- oxDNA2 on `DNA2/DSDNA8`
+- oxDNA2 static force-field checks in `DNA2/FORCE_FIELD/AVG_SEQ` and `DNA2/FORCE_FIELD/SEQ_DEP`
+
+When compiled with `-DROCM=ON`, CMake exposes:
+
+```bash
+cmake --build build-rocm --target test_rocm_quick
+cmake --build build-rocm --target test_rocm_run
+```
+
+These targets run `test/TestSuite.py` against the ROCm-specific inputs in `test/ROCM`.
 
 ## FAQ
 
@@ -54,7 +115,7 @@ Please cite these publications for any work that uses the oxDNA simulation packa
     
 ## Acknowledgements
 
-oxDNA depends on a minimum number of external libraries (a c++-14-compliant standard library and NVIDIA's CUDA if the user wishes to enable it).
+oxDNA depends on a minimum number of external libraries (a c++-14-compliant standard library, plus CUDA or ROCm/HIP if the user wishes to enable a GPU backend).
 
 Internally, oxDNA uses the following libraries, which are included in the source tree:
 

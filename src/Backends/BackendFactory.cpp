@@ -15,11 +15,17 @@
 #include "FFS_MD_CPUBackend.h"
 #include "MinBackend.h"
 #include "FIREBackend.h"
-#ifndef NOCUDA
+#if defined(GPU_BACKEND_CUDA)
 #include "../CUDA/Backends/MD_CUDABackend.h"
 #ifndef CUDA_DOUBLE_PRECISION
 #include "../CUDA/Backends/MD_CUDAMixedBackend.h"
 #include "../CUDA/Backends/FFS_MD_CUDAMixedBackend.h"
+#endif
+#elif defined(GPU_BACKEND_ROCM)
+#include "../ROCM/Backends/MD_CUDABackend.h"
+#ifndef CUDA_DOUBLE_PRECISION
+#include "../ROCM/Backends/MD_CUDAMixedBackend.h"
+#include "../ROCM/Backends/FFS_MD_CUDAMixedBackend.h"
 #endif
 #endif
 
@@ -51,8 +57,9 @@ std::shared_ptr<SimBackend> BackendFactory::make_backend(input_file &inp) {
 		if(backend_opt == "CPU") {
 			new_backend = new MD_CPUBackend();
 		}
-#ifndef NOCUDA
-		else if(backend_opt == "CUDA") {
+#if defined(GPU_BACKEND_CUDA) || defined(GPU_BACKEND_ROCM)
+		else if(backend_opt == "CUDA" || backend_opt == "ROCM") {
+			const char *gpu_backend_name = (backend_opt == "ROCM") ? "ROCM" : "CUDA";
 #ifndef CUDA_DOUBLE_PRECISION
 			if(precision_state == KEY_NOT_FOUND) {
 				backend_prec = "mixed";
@@ -77,7 +84,7 @@ std::shared_ptr<SimBackend> BackendFactory::make_backend(input_file &inp) {
 				throw oxDNAException("Backend precision '%s' is not allowed, as the code has been compiled with 'double' support only", backend_prec.c_str());
 			}
 #endif
-			OX_LOG(Logger::LOG_INFO, "CUDA backend precision: %s", backend_prec.c_str());
+			OX_LOG(Logger::LOG_INFO, "%s backend precision: %s", gpu_backend_name, backend_prec.c_str());
 		}
 #endif
 		else {
@@ -139,14 +146,14 @@ std::shared_ptr<SimBackend> BackendFactory::make_backend(input_file &inp) {
 		if(backend_opt == "CPU") {
 			new_backend = new FFS_MD_CPUBackend();
 		}
-#ifndef NOCUDA
+#if defined(GPU_BACKEND_CUDA) || defined(GPU_BACKEND_ROCM)
 #ifndef CUDA_DOUBLE_PRECISION
-		else if(backend_opt == "CUDA") {
+		else if(backend_opt == "CUDA" || backend_opt == "ROCM") {
 			if(backend_prec == "mixed") {
 				new_backend = new FFS_MD_CUDAMixedBackend();
 			}
 			else {
-				throw oxDNAException("Backend precision '%s' for FFS simulations with CUDA is not supported", backend_prec.c_str());
+				throw oxDNAException("Backend precision '%s' for FFS simulations with GPU backends is not supported", backend_prec.c_str());
 			}
 		}
 #endif

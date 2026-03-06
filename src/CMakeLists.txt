@@ -259,6 +259,7 @@ IF(CUDA)
 	CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
 	
 	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_FORCE_INLINES")
+	ADD_DEFINITIONS(-DGPU_BACKEND_CUDA)
 	
 	LIST(APPEND common_SOURCES
 		CUDA/CUDA_sort.cu
@@ -335,8 +336,111 @@ IF(CUDA)
 	endif()
 
 	MESSAGE(STATUS "${CUDA_COMMON_FLAGS}")
+ELSEIF(ROCM)
+	SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_FORCE_INLINES")
+	ADD_DEFINITIONS(-DGPU_BACKEND_ROCM)
+	get_filename_component(HIP_BIN_DIR "${CMAKE_HIP_COMPILER}" DIRECTORY)
+	get_filename_component(HIP_LLVM_DIR "${HIP_BIN_DIR}" DIRECTORY)
+	get_filename_component(ROCM_ROOT_DIR "${HIP_LLVM_DIR}" DIRECTORY)
+	find_library(ROCM_HIP_RUNTIME amdhip64
+		HINTS
+			${ROCM_ROOT_DIR}/lib
+			/opt/rocm/lib
+		REQUIRED
+	)
+
+	LIST(APPEND common_SOURCES
+		ROCM/CUDA_sort.cu
+		ROCM/CUDAUtils.cu
+		ROCM/cuda_utils/cuda_device_utils.cu
+		ROCM/Backends/CUDABaseBackend.cu
+		ROCM/Backends/MD_CUDABackend.cu
+		ROCM/Interactions/CUDABaseInteraction.cu
+		ROCM/Interactions/CUDADNAInteraction.cu
+		ROCM/Interactions/CUDADNA3Interaction.cu
+		ROCM/Interactions/CUDALJInteraction.cu
+		ROCM/Interactions/CUDARNAInteraction.cu
+		ROCM/Interactions/CUDAPatchyInteraction.cu
+		ROCM/Interactions/CUDATEPInteraction.cu
+		ROCM/Interactions/CUDAInteractionFactory.cu
+		ROCM/Interactions/CUDADNANMInteraction.cu
+		ROCM/Lists/CUDAListFactory.cu
+		ROCM/Lists/CUDANoList.cu
+		ROCM/Lists/CUDASimpleVerletList.cu
+		ROCM/Lists/CUDABinVerletList.cu
+		ROCM/Thermostats/CUDABaseThermostat.cu
+		ROCM/Thermostats/CUDANoThermostat.cu
+		ROCM/Thermostats/CUDAThermostatFactory.cu
+		ROCM/Thermostats/CUDABrownianThermostat.cu
+		ROCM/Thermostats/CUDALangevinThermostat.cu
+		Utilities/Timings.cpp
+	)
+
+	IF(CUDA_DOUBLE)
+		ADD_DEFINITIONS(-DCUDA_DOUBLE_PRECISION)
+	ELSE()
+		LIST(APPEND common_SOURCES
+			ROCM/Backends/MD_CUDAMixedBackend.cu
+			ROCM/Backends/FFS_MD_CUDAMixedBackend.cu
+		)
+	ENDIF()
+
+	set_source_files_properties(
+		ROCM/CUDA_sort.cu
+		ROCM/CUDAUtils.cu
+		ROCM/cuda_utils/cuda_device_utils.cu
+		ROCM/Backends/CUDABaseBackend.cu
+		ROCM/Backends/MD_CUDABackend.cu
+		ROCM/Interactions/CUDABaseInteraction.cu
+		ROCM/Interactions/CUDADNAInteraction.cu
+		ROCM/Interactions/CUDADNA3Interaction.cu
+		ROCM/Interactions/CUDALJInteraction.cu
+		ROCM/Interactions/CUDARNAInteraction.cu
+		ROCM/Interactions/CUDAPatchyInteraction.cu
+		ROCM/Interactions/CUDATEPInteraction.cu
+		ROCM/Interactions/CUDAInteractionFactory.cu
+		ROCM/Interactions/CUDADNANMInteraction.cu
+		ROCM/Lists/CUDAListFactory.cu
+		ROCM/Lists/CUDANoList.cu
+		ROCM/Lists/CUDASimpleVerletList.cu
+		ROCM/Lists/CUDABinVerletList.cu
+		ROCM/Thermostats/CUDABaseThermostat.cu
+		ROCM/Thermostats/CUDANoThermostat.cu
+		ROCM/Thermostats/CUDAThermostatFactory.cu
+		ROCM/Thermostats/CUDABrownianThermostat.cu
+		ROCM/Thermostats/CUDALangevinThermostat.cu
+		ROCM/Backends/MD_CUDAMixedBackend.cu
+		ROCM/Backends/FFS_MD_CUDAMixedBackend.cu
+		PROPERTIES LANGUAGE HIP
+	)
+
+	set(ROCM_COMMON_FLAGS
+		-ffast-math
+		-O3
+	)
+
+	add_library(${lib_name} SHARED ${common_SOURCES})
+	target_include_directories(${lib_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ROCM ${ROCM_ROOT_DIR}/include)
+	target_compile_definitions(${lib_name} PRIVATE THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP __HIP_PLATFORM_AMD__= __HIP_PLATFORM_HCC__=)
+	target_compile_options(${lib_name} PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${ROCM_COMMON_FLAGS}>)
+	target_link_libraries(${lib_name} PRIVATE ${ROCM_HIP_RUNTIME})
+	set_target_properties(${lib_name} PROPERTIES BUILD_RPATH "${ROCM_ROOT_DIR}/lib")
+
+	add_executable(${exe_name} ${oxDNA_SOURCES})
+	target_compile_definitions(${exe_name} PRIVATE THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP __HIP_PLATFORM_AMD__= __HIP_PLATFORM_HCC__=)
+	target_compile_options(${exe_name} PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${ROCM_COMMON_FLAGS}>)
+	target_link_libraries(${exe_name} PRIVATE ${ROCM_HIP_RUNTIME})
+	target_include_directories(${exe_name} PRIVATE ${ROCM_ROOT_DIR}/include)
+	set_target_properties(${exe_name} PROPERTIES BUILD_RPATH "${ROCM_ROOT_DIR}/lib")
+
+	add_executable(DNAnalysis ${DNAnalysis_SOURCES} Utilities/Timings.cpp)
+	target_compile_definitions(DNAnalysis PRIVATE THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP __HIP_PLATFORM_AMD__= __HIP_PLATFORM_HCC__=)
+	target_compile_options(DNAnalysis PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${ROCM_COMMON_FLAGS}>)
+	target_link_libraries(DNAnalysis PRIVATE ${ROCM_HIP_RUNTIME})
+	target_include_directories(DNAnalysis PRIVATE ${ROCM_ROOT_DIR}/include)
+	set_target_properties(DNAnalysis PROPERTIES BUILD_RPATH "${ROCM_ROOT_DIR}/lib")
 ELSE()
-	ADD_DEFINITIONS(-DNOCUDA)
+	ADD_DEFINITIONS(-DNO_GPU_BACKEND)
 	SET(common_SOURCES
 		${common_SOURCES}
 		Utilities/Timings.cpp
@@ -348,6 +452,12 @@ ELSE()
 ENDIF(CUDA)
 
 ADD_EXECUTABLE(confGenerator ${confGenerator_SOURCES})
+IF(ROCM)
+	target_compile_definitions(confGenerator PRIVATE THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP __HIP_PLATFORM_AMD__= __HIP_PLATFORM_HCC__=)
+	target_link_libraries(confGenerator PRIVATE ${ROCM_HIP_RUNTIME})
+	target_include_directories(confGenerator PRIVATE ${ROCM_ROOT_DIR}/include)
+	set_target_properties(confGenerator PROPERTIES BUILD_RPATH "${ROCM_ROOT_DIR}/lib")
+ENDIF()
 
 IF(MPI)
 	target_link_libraries(${lib_name} PRIVATE ${CMAKE_DL_LIBS} ${MPI_LIBRARIES})
@@ -362,3 +472,9 @@ target_link_libraries(confGenerator PRIVATE ${lib_name})
 # we add these executable as dependencies for the test targets
 ADD_DEPENDENCIES(test_run ${exe_name} DNAnalysis confGenerator)
 ADD_DEPENDENCIES(test_quick ${exe_name} DNAnalysis confGenerator)
+IF(TARGET test_rocm_run)
+	ADD_DEPENDENCIES(test_rocm_run ${exe_name} DNAnalysis confGenerator)
+ENDIF()
+IF(TARGET test_rocm_quick)
+	ADD_DEPENDENCIES(test_rocm_quick ${exe_name} DNAnalysis confGenerator)
+ENDIF()

@@ -1,0 +1,10 @@
+ColumnAverage::split_energy.dat::1::0.076689::1e-5
+ColumnAverage::split_energy.dat::2::0.000000::1e-6
+ColumnAverage::split_energy.dat::3::-0.907302::1e-5
+ColumnAverage::split_energy.dat::4::0.014298::1e-5
+ColumnAverage::split_energy.dat::5::-0.294279::1e-5
+ColumnAverage::split_energy.dat::6::-0.107509::1e-5
+ColumnAverage::split_energy.dat::7::-0.029633::1e-5
+ColumnAverage::split_energy.dat::8::0.001154::1e-5
+ColumnAverage::energy.dat::2::-1.246581::1e-5
+ColumnAverage::energy.dat::4::-0.934905::1e-5

@@ -17,9 +17,9 @@
  * parses the input file and builds the right simulation backend.
  *
  * @verbatim
-backend = CPU|CUDA (simulation backend. Defaults to CPU)
-[backend_precision = float|double|mixed (Precision at which calculateions are carried out. The mixed precision is only available on CUDA. Defaults to double.)]
-[sim_type = MD|MC|VMMC|FFS_MD (Type of the simulation. Supported types are Molecular Dynamics, Monte Carlo, Virtual Move Monte Carlo and Forward Flux Sampling. The first and last ones are also available on CUDA. Defaults to MD.)]
+backend = CPU|CUDA|ROCM (simulation backend. Defaults to CPU)
+[backend_precision = float|double|mixed (Precision at which calculateions are carried out. The mixed precision is only available on GPU backends. Defaults to double.)]
+[sim_type = MD|MC|VMMC|FFS_MD (Type of the simulation. Supported types are Molecular Dynamics, Monte Carlo, Virtual Move Monte Carlo and Forward Flux Sampling. The first and last ones are also available on CUDA and ROCM. Defaults to MD.)]
 @endverbatim
  */
 class BackendFactory {

@@ -11,6 +11,7 @@ project(oxDNA LANGUAGES CXX)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_FORCE_INLINES")
 
 OPTION(CUDA "Set to ON to compile with CUDA support" OFF)
+OPTION(ROCM "Set to ON to compile with ROCm/HIP support" OFF)
 OPTION(MPI "Set to ON to compile with MPI support" OFF)
 OPTION(Debug "Set to ON to compile with debug symbols" OFF)
 OPTION(G "Set to ON to compile with optimisations and debug symbols" OFF)
@@ -50,7 +51,14 @@ if(INTEL)
 	if(CUDA)
 		MESSAGE(FATAL_ERROR "oxDNA with CUDA support cannot be compiled with the Intel compiler")
 	ENDIF(CUDA)
+	if(ROCM)
+		MESSAGE(FATAL_ERROR "oxDNA with ROCm support cannot be compiled with the Intel compiler")
+	ENDIF(ROCM)
 ENDIF(INTEL) 
+
+if(CUDA AND ROCM)
+	MESSAGE(FATAL_ERROR "CUDA and ROCm support are mutually exclusive. Please enable only one GPU backend.")
+endif()
 
 PROJECT(oxDNA)
 
@@ -112,7 +120,7 @@ if(CUDA)
 	find_package(CUDAToolkit REQUIRED)
 	if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13.0")
 		message(STATUS "CUDA ${CUDAToolkit_VERSION} detected, setting C++17 as the standard, as required for CCCL")
-    	set(USE_CXX17_FOR_CUDA ON)
+    	set(USE_CXX17_FOR_GPU ON)
 	endif()
 
 	if(CMAKE_VERSION VERSION_LESS 3.18)
@@ -201,18 +209,41 @@ if(CUDA)
 	endif()
 endif(CUDA)
 
-if(USE_CXX17_FOR_CUDA)
+if(ROCM)
+	include(CheckLanguage)
+	check_language(HIP)
+	if(NOT CMAKE_HIP_COMPILER)
+		message(FATAL_ERROR
+			"ROCm requested but no HIP compiler found.\n"
+			"Please install ROCm or pass -DCMAKE_HIP_COMPILER=/path/to/hipcc"
+		)
+	endif()
+
+	enable_language(HIP)
+	if(NOT DEFINED CMAKE_HIP_ARCHITECTURES OR CMAKE_HIP_ARCHITECTURES STREQUAL "")
+		set(CMAKE_HIP_ARCHITECTURES "gfx90a")
+	endif()
+	message(STATUS "HIP compiler: ${CMAKE_HIP_COMPILER}")
+	message(STATUS "HIP architectures: ${CMAKE_HIP_ARCHITECTURES}")
+	set(USE_CXX17_FOR_GPU ON)
+endif()
+
+if(USE_CXX17_FOR_GPU)
     # CUDA 13+ requires C++17 for CCCL
     set(CMAKE_CXX_STANDARD 17)
     set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_HIP_STANDARD_REQUIRED ON)
 else()
     # Fallback to C++14
     set(CMAKE_CXX_STANDARD 14)
     set(CMAKE_CUDA_STANDARD 14)
+    set(CMAKE_HIP_STANDARD 14)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    set(CMAKE_HIP_STANDARD_REQUIRED ON)
 endif()
 
 if(JSON_ENABLED)
@@ -289,11 +320,34 @@ add_custom_target(test_quick
     COMMENT "Running quick tests" VERBATIM
 )
 
+if(ROCM)
+add_custom_target(test_rocm_run
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/TestSuite.py ${CMAKE_CURRENT_SOURCE_DIR}/test/ROCM/test_folder_list.txt ${PROJECT_BINARY_DIR}/bin/oxDNA run
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test
+    COMMENT "Running ROCm regression tests" VERBATIM
+)
+
+add_custom_target(test_rocm_quick
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/TestSuite.py ${CMAKE_CURRENT_SOURCE_DIR}/test/ROCM/test_folder_list.txt ${PROJECT_BINARY_DIR}/bin/oxDNA quick
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test
+    COMMENT "Running ROCm quick tests" VERBATIM
+)
+
+add_custom_target(test_rocm
+	COMMENT "Running all ROCm tests" VERBATIM
+)
+
+add_dependencies(test_rocm test_rocm_quick test_rocm_run)
+endif()
+
 add_custom_target(test
 	COMMENT "Running all tests" VERBATIM
 )
 
 add_dependencies(test test_quick test_run)
+if(ROCM)
+	add_dependencies(test test_rocm)
+endif()
 
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 

@@ -11,8 +11,11 @@
 
 #include <algorithm>
 
-#ifdef NOCUDA
+#ifdef NO_GPU_BACKEND
 #define SYNCHRONIZE()
+#elif defined(GPU_BACKEND_ROCM)
+#include <hip/hip_runtime_api.h>
+#define SYNCHRONIZE() hipDeviceSynchronize()
 #else
 #include <cuda_runtime_api.h>
 #define SYNCHRONIZE() cudaDeviceSynchronize()
@@ -260,4 +263,3 @@ void TimingManager::print(long long int total_steps) {
 
 	return;
 }
-
