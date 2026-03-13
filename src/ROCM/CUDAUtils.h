@@ -35,6 +35,9 @@ public:
 	static c_number4 sum_c_number4_on_GPU(c_number4 *dv, int N);
 
 	static double sum_c_number4_to_double_on_GPU(c_number4 *dv, int N);
+	static double sum_c_number4_w_to_double_on_GPU(c_number4 *dv, int N);
+	static double sum_kinetic_energy_on_GPU(c_number4 *vels, c_number4 *Ls, int N, bool any_rigid_body);
+	static double sum_kinetic_energy_on_GPU(LR_double4 *vels, LR_double4 *Ls, int N, bool any_rigid_body);
 
 	static float int_as_float(const int a) {
 		union {

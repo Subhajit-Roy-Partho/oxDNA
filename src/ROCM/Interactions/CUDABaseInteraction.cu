@@ -88,10 +88,14 @@ void CUDABaseInteraction::get_cuda_settings(input_file &inp) {
 			throw oxDNAException("The selected CUDA interaction is not compatible with 'use_edge = true'");
 		}
 
-		getInputInt(&inp, "edge_n_forces", &_n_forces, 0);
+		if(getInputInt(&inp, "edge_n_forces", &_n_forces, 0) == KEY_NOT_FOUND) {
+			_n_forces = 4;
+		}
 		if(_n_forces < 1) {
 			throw oxDNAException("edge_n_forces must be > 0");
 		}
+
+		OX_LOG(Logger::LOG_INFO, "ROCM edge accumulation enabled with edge_n_forces = %d", _n_forces);
 	}
 }
 

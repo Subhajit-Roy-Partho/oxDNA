@@ -252,8 +252,8 @@ void CUDABaseBackend::init_cuda() {
 
 void CUDABaseBackend::_init_CUDA_kernel_cfgs() {
 	if(_particles_kernel_cfg.threads_per_block == 0) {
-		_particles_kernel_cfg.threads_per_block = 2 * _device_prop.warpSize;
-		OX_LOG(Logger::LOG_INFO, "threads_per_block was not specified or set to 0. The default value (%d) will be used", 2 * _device_prop.warpSize);
+		_particles_kernel_cfg.threads_per_block = 64;
+		OX_LOG(Logger::LOG_INFO, "threads_per_block was not specified or set to 0. The ROCM default value (%d) will be used", _particles_kernel_cfg.threads_per_block);
 	}
 
 	int N = CONFIG_INFO->N();
@@ -264,6 +264,7 @@ void CUDABaseBackend::_init_CUDA_kernel_cfgs() {
 	_particles_kernel_cfg.blocks.y = _particles_kernel_cfg.blocks.z = 1;
 
 	_cuda_interaction->set_launch_cfg(_particles_kernel_cfg);
+	OX_LOG(Logger::LOG_INFO, "ROCM particle kernel config: threads_per_block = %d, blocks = %d", _particles_kernel_cfg.threads_per_block, _particles_kernel_cfg.blocks.x);
 
 	OX_DEBUG("Particle kernel cfg: threads_per_block = %d, blocks = (%d, %d, %d)", _particles_kernel_cfg.threads_per_block,
 	_particles_kernel_cfg.blocks.x, _particles_kernel_cfg.blocks.y, _particles_kernel_cfg.blocks.z);

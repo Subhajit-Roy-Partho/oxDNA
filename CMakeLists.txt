@@ -266,8 +266,37 @@ ELSE()
 ENDIF(Git_FOUND)
 
 IF(IS_GIT_REPO)
-	EXECUTE_PROCESS(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} OUTPUT_VARIABLE revision OUTPUT_STRIP_TRAILING_WHITESPACE)
-	EXECUTE_PROCESS(COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 HEAD WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} OUTPUT_VARIABLE tag OUTPUT_STRIP_TRAILING_WHITESPACE)
+	EXECUTE_PROCESS(
+		COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+		OUTPUT_VARIABLE revision
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		RESULT_VARIABLE revision_result
+		ERROR_QUIET
+	)
+	IF(NOT revision_result EQUAL 0 OR revision STREQUAL "")
+		SET(revision "unknown")
+	ENDIF()
+
+	EXECUTE_PROCESS(
+		COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 HEAD
+		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+		OUTPUT_VARIABLE tag
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		RESULT_VARIABLE tag_result
+		ERROR_QUIET
+	)
+	IF(NOT tag_result EQUAL 0 OR tag STREQUAL "")
+		get_filename_component(dir_name ${PROJECT_SOURCE_DIR} NAME)
+		string(REGEX MATCH "-([0-9]+\\.[0-9]+\\.[0-9]+.*)$" version_match ${dir_name})
+		IF(version_match)
+			SET(tag "v${CMAKE_MATCH_1}")
+		ELSE()
+			# Keep oxpy packaging valid even in tagless clones, such as feature branches or forks.
+			SET(tag "v3.7")
+		ENDIF()
+		MESSAGE(WARNING "No git tag found; falling back to ${tag} for version metadata")
+	ENDIF()
 ELSE()
 	get_filename_component(dir_name ${PROJECT_SOURCE_DIR} NAME)
 	string(REGEX MATCH "-([0-9]+\\.[0-9]+\\.[0-9]+.*)$" version_match ${dir_name})

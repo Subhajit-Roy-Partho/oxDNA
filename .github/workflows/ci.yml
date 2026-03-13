@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu-build-test:
+    name: CPU Build And Repo Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure CPU build
+        run: cmake -S . -B build-ci -DCUDA=OFF -DROCM=OFF -DNATIVE_COMPILATION=OFF
+
+      - name: Build CPU targets
+        run: cmake --build build-ci --parallel 2
+
+      - name: Run integration tests
+        run: cmake --build build-ci --target test_run --parallel 2
+
+      - name: Run quick tests
+        run: cmake --build build-ci --target test_quick --parallel 2
+
+  oxpy-build-test:
+    name: oxpy And OAT
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python build dependencies
+        run: python -m pip install --upgrade pip wheel setuptools pytest cython numpy scipy
+
+      - name: Configure oxpy build
+        run: cmake -S . -B build-oxpy -DPython=1 -DOxpySystemInstall=1 -DCUDA=OFF -DROCM=OFF -DNATIVE_COMPILATION=OFF
+
+      - name: Build oxpy targets
+        run: cmake --build build-oxpy --parallel 2
+
+      - name: Install oxpy
+        run: cmake --build build-oxpy --target install --parallel 2
+
+      - name: Check Python imports
+        run: python -c "import oxpy; import oxDNA_analysis_tools"
+
+      - name: Run oxpy example
+        working-directory: examples/OXPY
+        run: python run.py
+
+      - name: Check oat CLI
+        run: oat config
+
+      - name: Run CLI pytest suite
+        run: python -m pytest ./analysis/tests/test_cli/
+
+  docs-build-publish:
+    name: Docs Build And Publish
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install --upgrade pip wheel setuptools cython
+          pip install .
+          pip install ./analysis
+          pip install --upgrade -r docs/docs_requirements.txt
+
+      - name: Build HTML docs
+        run: make -C docs html
+
+      - name: Publish docs to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./docs/build/html

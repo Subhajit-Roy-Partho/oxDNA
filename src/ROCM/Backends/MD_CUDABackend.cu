@@ -629,6 +629,9 @@ void MD_CUDABackend::get_settings(input_file &inp) {
 	}
 
 	getInputBool(&inp, "CUDA_avoid_cpu_calculations", &_avoid_cpu_calculations, 0);
+	if(!_avoid_cpu_calculations) {
+		getInputBool(&inp, "ROCM_avoid_cpu_calculations", &_avoid_cpu_calculations, 0);
+	}
 	getInputBool(&inp, "CUDA_barostat_always_refresh", &_cuda_barostat_always_refresh, 0);
 	getInputBool(&inp, "CUDA_print_energy", &_print_energy, 0);
 	getInputInt(&inp, "CUDA_update_stress_tensor_every", &_update_st_every, 0);
