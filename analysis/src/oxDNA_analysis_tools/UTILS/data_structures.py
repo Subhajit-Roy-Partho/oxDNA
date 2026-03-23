@@ -1,9 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import inspect
 import numpy as np
-#import numpy.typing as npt
 from typing import Union
 
 
@@ -87,16 +86,18 @@ class TopInfo:
 
 class System:
     """
-        Object hierarchy representation of an oxDNA configuration
+    Object hierarchy representation of an oxDNA configuration
 
-        Can be accessed and modified using Python list syntax (implements __getitem__, __setitem__, and __iter__) for accessing Strand objects.
+    Can be accessed and modified using Python list syntax (implements __getitem__, __setitem__, and __iter__) for accessing Strand objects.
 
-        Parameters:
-            top_file (str) : The path to the topology file creating the system
-            strands (List[Strand]) : A list of Strand objects
+    Parameters:
+        top_file (str) : The path to the topology file creating the system
+        strands (List[Strand]) : A list of Strand objects
     """
 
+    #: The path to the topology file creating the system
     top_file: str
+    #: List of constituent Strand objects
     strands: List[Strand]
 
     def __init__(self, top_file:str='', strands:Union[List[Strand],None]=None):
@@ -116,38 +117,36 @@ class System:
 
     def append(self, strand:Strand):
         """
-            Append a strand to the system.
+        Append a strand to the system.
 
-            Modifies this system in-place.
+        Modifies this system in-place.
 
-            Parameters:
-                strand (Strand) : The strand to append
+        Parameters:
+            strand (Strand) : The strand to append
         """
         self.strands.append(strand)
 
 class Strand:
     """
-        Object hierarchy representation of an oxDNA strand.
+    Object hierarchy representation of an oxDNA strand.
 
-        Can be accessed and modified using Python list syntax (implements __getitem__, __setitem__, and __iter__) for accessing Monomer objects.
+    Can be accessed and modified using Python list syntax (implements __getitem__, __setitem__, and __iter__) for accessing Monomer objects.
 
-        Parameters:
-            id (int) : The id of the strand
-            *initial_data (list[dict]) : Set additional attributes of the strand object (currently unused)
-            **kwargs (dict) : Set addtional attributes of the strand object from key:value pairs.
-
-        Attributes:
-            _from_old (bool) : Was this created from an old-style topology file? (default : False)
-            id (int) : ID of this strand in the topology file
-            monomers (list[Monomer]) : List of consitutent monomer objects (default : [])
-            type (str) : Type of molecule this represents (default : DNA)
-            circular (bool) : Is this a circular strand? (default : False)
+    Parameters:
+        id (int) : The id of the strand
+        *initial_data (list[dict]) : Set additional attributes of the strand object (currently unused)
+        **kwargs (dict) : Set additional attributes of the strand object from key:value pairs.
     """
-
+    
+    #: Was this created from an old-style topology file? (default: False)
     _from_old: bool
+    #: ID of this strand in the topology file
     id: int
+    #: List of constituent monomer objects (default [])
     monomers: List[Monomer]
+    #: Type of molecule this represents (default DNA)
     type: str
+    #: Is this a circular strand? (default False)
     circular: bool
 
     def __init__(self, id, *initial_data, **kwargs):
@@ -238,7 +237,13 @@ class Strand:
         """
         Returns the sequence of the Strand as a string.
         """
-        return ''.join([m.btype for m in self])
+        seq_str = []
+        for m in self:
+            if isinstance(m.btype, str):
+                seq_str.append(m.btype)
+            elif isinstance(m.btype, int):
+                seq_str.append(f"({m.btype})")
+        return ''.join(seq_str)
     
     def set_sequence(self, new_seq:str) -> None:
         """
@@ -261,6 +266,31 @@ class Strand:
         """
         self.monomers.append(monomer)
 
+    def get_5_3(self) -> List[Tuple[int, str]]:
+        """
+        Return a list of ``(id, btype_str)`` tuples for this strand in 5'→3' order.
+
+        Handles both new-format and old-format strands, including circular strands.
+
+        * **New-format** strands store monomers in 5'→3' order already, so
+          ``self.monomers`` is returned directly.
+        * **Old-format** strands store monomers in file order (typically 3'→5'),
+          so connectivity is traversed from the 5' end (the monomer whose ``n5``
+          is ``None``) following ``n3`` links.  For circular old-format strands
+          there is no monomer with ``n5 is None``, so traversal starts at
+          ``monomers[0]`` and stops when a monomer id is revisited.
+        """
+        if not self._from_old:
+            return [(m.id, str(m.btype)) for m in self.monomers]
+        m_by_id = {m.id: m for m in self.monomers}
+        start = next((m for m in self.monomers if m.n5 is None), self.monomers[0])
+        chain, cur, seen = [], start, set()
+        while cur is not None and cur.id not in seen:
+            chain.append((cur.id, str(cur.btype)))
+            seen.add(cur.id)
+            cur = m_by_id.get(cur.n3)
+        return chain
+
 #No, you cannot make n3, n5 and pair refs to other Monomers
 #Scaffold strands are long enough that it would stack overflow while pickling for Pool processing
 #Therefore you have to get the references from ids in the monomers array
@@ -270,7 +300,7 @@ class Monomer:
         A Dataclass containing information about oxDNA monomers.
     """
     id : int
-    btype : str
+    btype : Union[str,int]
     strand : Union[Strand, None] = None
     n3 : Union[int, None] = None
     n5 : Union[int, None] = None

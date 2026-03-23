@@ -159,6 +159,15 @@
     :prog: oat generate_forces
 ```
 
+## IDconvert
+
+```{eval-rst}
+.. argparse::
+    :filename: ../analysis/src/oxDNA_analysis_tools/IDconvert.py
+    :func: cli_parser
+    :prog: oat IDconvert
+```
+
 ## Mean
 
 ```{eval-rst}
@@ -246,6 +255,15 @@
     :filename: ../analysis/src/oxDNA_analysis_tools/pca.py
     :func: cli_parser
     :prog: oat pca
+```
+
+## Skeleton
+
+```{eval-rst}
+.. argparse::
+    :filename: ../analysis/src/oxDNA_analysis_tools/skeleton.py
+    :func: cli_parser
+    :prog: oat skeleton
 ```
 
 ## Subset trajectory

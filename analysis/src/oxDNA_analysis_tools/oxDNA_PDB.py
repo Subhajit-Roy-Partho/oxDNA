@@ -2,12 +2,14 @@
 
 import os
 import re
+import inspect
 import numpy as np
 import copy
 import argparse
 from collections import defaultdict
 from typing import List, Dict, Tuple, Union
 from io import TextIOWrapper
+from pathlib import Path
 
 from oxDNA_analysis_tools.UTILS.pdb import Atom, PDB_Nucleotide, PDB_AminoAcid, FROM_OXDNA_TO_ANGSTROM
 from oxDNA_analysis_tools.UTILS.RyeReader import get_confs, describe, strand_describe, inbox
@@ -15,8 +17,8 @@ from oxDNA_analysis_tools.UTILS.data_structures import Strand, Configuration, Sy
 from oxDNA_analysis_tools.UTILS.logger import log, logger_settings
 import oxDNA_analysis_tools.UTILS.utils as utils
 
-DD12_PDB_PATH = "./UTILS/dd12_na.pdb"
-RNA_PDB_PATH = "./UTILS/2jxq.pdb"
+# This is terrible code, but it *does* get the path of this file whether its run as a script or imported as a module or whatever Sphinx does to build docs.
+PDB_PATH = Path(os.path.dirname(os.path.realpath(inspect.getfile(inspect.currentframe())))+"/UTILS/pdb_templates/")
 
 number_to_DNAbase = {0 : 'A', 1 : 'G', 2 : 'C', 3 : 'T'}
 number_to_RNAbase = {0 : 'A', 1 : 'G', 2 : 'C', 3 : 'U'}
@@ -43,7 +45,10 @@ na_pdb_names = ['DA', 'DT', 'DG', 'DC', 'DI',
                 'DA5', 'DT5', 'DG5', 'DC5', 'DI5',
                 'DA3', 'DT3', 'DG3', 'DC3', 'DI3',
                 'A5', 'U5', 'G5', 'C5', 'I5',
-                'A3', 'U3', 'G3', 'C3', 'I3'
+                'A3', 'U3', 'G3', 'C3', 'I3',
+                'RA5', 'RU5', 'RG5', 'RC5', 'RI5',
+                'RA3', 'RU3', 'RG3', 'RC3', 'RI3',
+                'PSU', '5HC', 'S6G'
                 ]
 
 def align(full_base, ox_base):
@@ -73,7 +78,7 @@ def get_nucs_from_PDB(file:str) -> List[PDB_Nucleotide]:
         nucleotides = []
         old_residue = ""
         for line in f.readlines():
-            if len(line) > 77 and line[17:20].strip() in na_pdb_names:
+            if 'ATOM' in line[0:7] or 'HETATM' in line[0:7] and line[17:20].strip() in na_pdb_names:
                 na = Atom(line)
                 if na.residue_idx != old_residue:
                     nn = PDB_Nucleotide(na.residue, na.residue_idx)
@@ -83,9 +88,31 @@ def get_nucs_from_PDB(file:str) -> List[PDB_Nucleotide]:
 
     return nucleotides
 
+# Helper functions for getting specific atoms relative to COM
+get_base_center = lambda nuc: np.mean([a.pos - nuc.get_com() for a in nuc.base_atoms], axis=0)
+get_base_C2 = lambda nuc: nuc["C2"].pos - nuc.get_com()
+get_base_edge = lambda nuc: nuc['N1'].pos - nuc.get_com() if any((c in nuc.name for c in ['A', 'G'])) else nuc['N3'].pos - nuc.get_com()
+get_base_hex_bottom = lambda nuc: nuc['N3'].pos - nuc.get_com() if any((c in nuc.name for c in ['A', 'G'])) else nuc['C2'].pos - nuc.get_com()
+get_O3s = lambda nuc: nuc["O3'"].pos - nuc.get_com()
+get_C5s = lambda nuc: nuc["C5'"].pos - nuc.get_com()
+get_C4s = lambda nuc: nuc["C4'"].pos - nuc.get_com()
+get_phosphate = lambda nuc: nuc['P'].pos - nuc.get_com() if not '5' in nuc.name \
+                else nuc["HO5'"].pos - nuc.get_com() if "HO5'" in nuc.named_atoms \
+                else nuc["O5'"].pos - nuc.get_com() if "O5'" in nuc.named_atoms \
+                else np.array([np.nan, np.nan, np.nan])
+
+# Empirically computed best reference points for DNA/RNA
+# Voodoo: it works best if you use O3 for generating DNA fragments, but C4 for actual mapping
+#DNA_funcs = {"back" : get_O3s, "base" : get_base_center}
+DNA_funcs = {"back" : get_C4s, "base" : get_base_center}
+RNA_funcs = {"back" : get_C5s, "base" : get_base_edge}
+
+# Don't delete this function!
 def choose_reference_nucleotides(nucleotides:List[PDB_Nucleotide]) -> Dict[str, PDB_Nucleotide]:
     """
-        Find nucleotides that most look like an oxDNA nucleotide (orthogonal a1 and a3 vectors).
+        Find nucleotides that most look like an oxDNA nucleotide geometry.
+
+        This function is never used in any production code, but it is used for building the reference library by `development code <https://github.com/ErikPoppleton/oxDNA_backmapping>`_. 
 
         Parameters:
             nucleotides (List[PDB_Nucleotide]) : List of nucleotides to compare.
@@ -93,16 +120,55 @@ def choose_reference_nucleotides(nucleotides:List[PDB_Nucleotide]) -> Dict[str, 
         Returns:
             Dict[str, PDB_Nucleotide] : The best nucleotide for each type in the format `{'C' : PDB_Nucleotide}`.
     """
+    ref_a1 = np.array([1, 0, 0])
+    ref_a3 = np.array([0, 0, 1])
+    ref_a2 = np.array([0, 1, 0])
+    bs = utils.get_pos_base(np.zeros(3), ref_a1, ref_a3) * FROM_OXDNA_TO_ANGSTROM
+
+    log("Scoring bases... Lower scores are better.")
     bases = {}
     for n in nucleotides:
+        if 'D' in n.name:
+            funcs = DNA_funcs
+            bbs = utils.get_pos_back(np.zeros(3), ref_a1, ref_a3, type='DNA') * FROM_OXDNA_TO_ANGSTROM
+        else:
+            # Things that aren't DNA are treated as RNA.
+            funcs = RNA_funcs
+            bbs = utils.get_pos_back(np.zeros(3), ref_a1, ref_a3, type='RNA') * FROM_OXDNA_TO_ANGSTROM
+
+        # Get the all-atom proxies for the oxDNA sites
         n.compute_as()
+        proxies = np.array([
+            n.a1,
+            n.a3,
+            n.a2,
+            funcs["back"](n),
+            funcs["base"](n)
+        ])
+        ref = np.array([
+            ref_a1,
+            ref_a3,
+            ref_a2,
+            bbs,
+            bs
+        ])
+
+        # Align the all-atom representation to the oxDNA bead
+        utils.kabsch_align(proxies, ref, center=False, inplace=True)
+
+        # Score the alignment and keep the best
+        diff = np.mean(np.linalg.norm(proxies - ref, axis=1))
+        
         if n.base in bases:
-            if n.check < bases[n.base].check: # Find the most orthogonal a1/a3 in the reference
+            if diff < bases[n.base].pdb_score: # Find the most oxDNA-like nucleotide for each base type
                 bases[n.base] = copy.deepcopy(n)
-                bases[n.base].a1, bases[n.base].a2, bases[n.base].a3 = utils.get_orthonormalized_base(n.a1, n.a2, n.a3)
+                bases[n.base].pdb_score = diff
         else:
             bases[n.base] = copy.deepcopy(n)
-            bases[n.base].a1, bases[n.base].a2, bases[n.base].a3 = utils.get_orthonormalized_base(n.a1, n.a2, n.a3)
+            bases[n.base].pdb_score = diff
+
+    for k, v in bases.items():
+        log(f"Base {k} : best score {v.pdb_score:.3f}")
 
     return bases
 
@@ -185,6 +251,25 @@ def peptide_to_pdb(strand:Strand, conf:Configuration, pdbfile:str, reading_posit
 
     return(reading_position, amino_acids)
 
+_HY36_DIGITS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+_HY36_OFFSET = 16696160  # int('A0000', 36) - 100000
+
+def _format_atom_serial(n: int) -> str:
+    """Format a PDB atom serial number using the hybrid36 convention beyond 99999.
+
+    Values 1-99999 are written as standard decimal.  Values >= 100000 are encoded
+    as 5-character base-36 strings (0-9 then A-Z per digit) with an offset chosen
+    so that A0000 == 100000 (e.g. 100010 -> A000A, 100036 -> A0010).
+    """
+    if n < 100000:
+        return f"{n:5d}"
+    n += _HY36_OFFSET
+    chars = []
+    for _ in range(5):
+        chars.append(_HY36_DIGITS[n % 36])
+        n //= 36
+    return ''.join(reversed(chars))
+
 def write_strand_to_PDB(strand_pdb:List[Dict], chain_id:str, atom_counter:int, out:TextIOWrapper) -> int:
     """
         Write a list of nucleotide property dictionaries as a new chain to an open PDB file
@@ -201,33 +286,33 @@ def write_strand_to_PDB(strand_pdb:List[Dict], chain_id:str, atom_counter:int, o
     #re-index and create PDB string
     for nid, n in enumerate(strand_pdb, 1):
         for a in n:
-            print("{:6s}{:5d} {:^4s}{:1s}{:>3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}"
+            print("{:6s}{:5s} {:^4s}{:1s}{:>3s} {:1s}{:4d}{:1s}   {:8.3f}{:8.3f}{:8.3f}{:6.2f}{:6.2f}          {:>2s}{:2s}"
                 .format(
-                    "ATOM",            #record
-                    atom_counter,      #atom_id
-                    a['name'],         #atom_name
-                    " ",               #alt_loc
-                    a['residue_name'], #res_name
-                    chain_id,          #chain_id
-                    nid,               #res_id
-                    " ",               #ins_code
-                    a['pos'][0],       #coord_x
-                    a['pos'][1],       #coord_y
-                    a['pos'][2],       #coord_z
-                    1.00,              #residency
-                    a['bfactor'],      #b-factor
-                    " ", " "           #element,charge
+                    "ATOM",                         #record
+                    _format_atom_serial(atom_counter), #atom_id
+                    a['name'],                      #atom_name
+                    " ",                            #alt_loc
+                    a['residue_name'],              #res_name
+                    chain_id,                       #chain_id
+                    nid,                            #res_id
+                    " ",                            #ins_code
+                    a['pos'][0],                    #coord_x
+                    a['pos'][1],                    #coord_y
+                    a['pos'][2],                    #coord_z
+                    1.00,                           #residency
+                    a['bfactor'],                   #b-factor
+                    " ", " "                        #element,charge
                 ),
                 file=out
             )
-            atom_counter = (atom_counter+1) % 9999
+            atom_counter = (atom_counter + 1) % 43770016  # hybrid36 max: ZZZZZ
     print("TER", file=out)
 
     return(atom_counter)
 
 def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_files:Union[List[str], None]=None, reverse:bool=False, hydrogen:bool=True, uniform_residue_names:bool=False, one_file_per_strand:bool=False, rmsf_file:str=''):
     """
-        Convert an oxDNA file to a PDB file.  Directly writes the file.
+        Convert an oxDNA file to a PDB file using fragment assembly.  Directly writes the file.
 
         Parameters:
             conf (Configuration) : The Configuration to convert
@@ -242,11 +327,16 @@ def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_f
 
     """
     # Open PDB File of nice lookin duplexes to get base structures from
-    DNAnucleotides = get_nucs_from_PDB(os.path.join(os.path.dirname(__file__), DD12_PDB_PATH))
-    RNAnucleotides = get_nucs_from_PDB(os.path.join(os.path.dirname(__file__), RNA_PDB_PATH))
-
-    DNAbases = choose_reference_nucleotides(DNAnucleotides)
-    RNAbases = choose_reference_nucleotides(RNAnucleotides)
+    DNAbases = {}
+    RNAbases = {}
+    for f in PDB_PATH.iterdir():
+        base = get_nucs_from_PDB(str(f))[0]
+        base.compute_as()
+        base.a1, base.a2, base.a3 = utils.get_orthonormalized_base(base.a1, base.a2, base.a3)
+        if 'D' in f.stem:
+            DNAbases[f.stem] = base
+        else:
+            RNAbases[f.stem] = base
 
     box_angstrom = conf.box * FROM_OXDNA_TO_ANGSTROM
 
@@ -293,7 +383,7 @@ def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_f
             log("Converting strand {}".format(strand.id), end='\r')
 
             # Handle protein
-            if strand.id < 0 and protein_pdb_files:
+            if strand.type == 'peptide' and protein_pdb_files:
                 # Map oxDNA configuration onto R-group orientations from pdb file
                 s_pdbfile = iter(protein_pdb_files)
                 pdbfile = next(s_pdbfile)
@@ -320,45 +410,82 @@ def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_f
                 raise RuntimeError("You must provide PDB files containing just the protein for each protein in the scene.")
 
             # Nucleic Acids
-            elif strand.id >= 0:
+            elif strand.type == 'DNA' or strand.type == 'RNA':
                 for nucleotide in nucleotides_in_strand:
                     # Get paragon DNA or RNA nucleotide
-                    if type(nucleotide.btype) != str:
+                    if type(nucleotide.btype) == int:
                         if isDNA:
-                            nb = number_to_DNAbase[nucleotide.btype]
+                            nb = number_to_DNAbase[nucleotide.btype % 4]
                         else:
-                            nb = number_to_RNAbase[nucleotide.btype]
-                    else: 
+                            nb = number_to_RNAbase[nucleotide.btype % 4]
+                    elif type(nucleotide.btype) == str: 
                         nb = nucleotide.btype
+                    else:
+                        raise RuntimeError(f"Bad base type: {nucleotide.btype} on nucleotide id {nucleotide.id}")
                     
+                    # Change the base type for the ends
+                    if (nucleotide == strand.monomers[0] or nucleotide == strand.monomers[-1]) and not strand.is_circular():
+                        if strand.is_old():
+                            if nucleotide == strand.monomers[0]:
+                                end_type = "3"
+                            elif nucleotide == strand.monomers[-1]:
+                                end_type = "5"
+                        else:
+                            if nucleotide == strand.monomers[0]:
+                                end_type = "5"
+                            elif nucleotide == strand.monomers[-1]:
+                                end_type = "3"
+                    else:
+                        end_type = ""
+
+                    sugar_type = 'D' if (strand.type == 'DNA') else 'R' if (strand.type == 'RNA' and end_type) else ''
+                    nb = sugar_type + nb + end_type
+
                     if isDNA:
                         my_base = copy.deepcopy(DNAbases[nb])
                     else:
                         my_base = copy.deepcopy(RNAbases[nb])
 
-                    # end residue identifiers
-                    residue_type = ""
-                    if not uniform_residue_names:
-                        if strand.is_old():
-                            if nucleotide == strand.monomers[0] and not strand.is_circular():
-                                residue_type = "3"
-                            elif nucleotide == strand.monomers[-1] and not strand.is_circular():
-                                residue_type = "5"
-                        else:
-                            if nucleotide == strand.monomers[0] and not strand.is_circular():
-                                residue_type = "5"
-                            elif nucleotide == strand.monomers[-1] and not strand.is_circular():
-                                residue_type = "3"
+                    # Compute oxDNA reference frame for current all-atom fragment
+                    funcs = DNA_funcs if strand.type == 'DNA' else RNA_funcs
+                    my_base.compute_as()
+                    proxies = np.array([
+                        my_base.a1,
+                        my_base.a3,
+                        my_base.a2,
+                        funcs["back"](my_base),
+                        funcs["base"](my_base)
+                    ])
 
-                    nuc_data = {
-                        'pos' : conf.positions[nucleotide.id],
-                        'a1' : conf.a1s[nucleotide.id],
-                        'a3' : conf.a3s[nucleotide.id] 
-                    }
+                    # Prepare oxDNA base for alignment
+                    pos = conf.positions[nucleotide.id] * FROM_OXDNA_TO_ANGSTROM
+                    a1 = conf.a1s[nucleotide.id]
+                    a3 = conf.a3s[nucleotide.id]
+                    a2 = np.cross(a3, a1)
+                    bbs = (utils.get_pos_back(pos, a1, a3, type=strand.type) - pos) * FROM_OXDNA_TO_ANGSTROM
+                    bs = (utils.get_pos_base(pos, a1, a3, type=strand.type) - pos) * FROM_OXDNA_TO_ANGSTROM
+                    ox_sites = np.array([
+                        a1,
+                        a3,
+                        a2,
+                        bbs,
+                        bs
+                    ])
 
-                    # Align paragon nucleotide to the oxDNA nucleotide
-                    my_base.set_com(nuc_data['pos'] * FROM_OXDNA_TO_ANGSTROM)
-                    align(my_base, nuc_data)
+                    # Compute rotation matrix for all-atom fragment
+                    rot = utils.kabsch_align(proxies, ox_sites, center=False, inplace=True, return_rot=True)
+
+                    # Rotate + translate atom positions
+                    atoms_array = np.array([a.pos for a in my_base.get_atoms()])
+                    atoms_array -= np.mean(atoms_array, axis=0)
+                    np.dot(atoms_array, rot, out=atoms_array)
+                    atoms_array += pos
+                    for i, a in enumerate(my_base.get_atoms()):
+                        a.pos = atoms_array[i]
+
+                    my_base.compute_as()
+                    for a in my_base.get_atoms():
+                        a.pos -= 0.5 * my_base.a1 # voodoo, slightly improves RNA structure.
 
                     if correct_for_large_boxes:
                         my_base.correct_for_large_boxes(box_angstrom)
@@ -366,7 +493,6 @@ def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_f
                     # Turn nucleotide object into a dict for output
                     nucleotide_pdb = my_base.to_pdb(
                         hydrogen,
-                        residue_type,
                         bfactor=rmsf_per_nucleotide[nucleotide.id],
                     )
                     strand_pdb.append(nucleotide_pdb)
@@ -377,6 +503,9 @@ def oxDNA_PDB(conf:Configuration, system:System, out_basename:str, protein_pdb_f
 
                 # Write the current strand to the pdb file.
                 atom_counter = write_strand_to_PDB(strand_pdb, chain_id, atom_counter, out)
+
+            else:
+                log(f"Unknown strand type {strand.type} on strand {strand.id}. Skipping", level='warning')
                 
             # Either open a new file or increment chain ID
             # Chain ID can be any alphanumeric character.  Convention is A-Z, a-z, 0-9

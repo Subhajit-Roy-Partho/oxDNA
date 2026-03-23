@@ -30,8 +30,8 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.align.align
-    oxDNA_analysis_tools.align.svd_align
+    align.align
+    align.svd_align
     
 .. autofunction:: oxDNA_analysis_tools.align.align
 .. autofunction:: oxDNA_analysis_tools.align.svd_align
@@ -48,7 +48,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.anm_parameterize.anm_parameterize
+    anm_parameterize.anm_parameterize
     
 .. autofunction:: oxDNA_analysis_tools.anm_parameterize.anm_parameterize
 ```
@@ -64,7 +64,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.backbone_flexibility.backbone_flexibility
+    backbone_flexibility.backbone_flexibility
     
 .. autofunction:: oxDNA_analysis_tools.backbone_flexibility.backbone_flexibility
 ```
@@ -80,7 +80,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.bond_analysis.bond_analysis
+    bond_analysis.bond_analysis
     
 .. autofunction:: oxDNA_analysis_tools.bond_analysis.bond_analysis
 ```
@@ -96,7 +96,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.centroid.centroid
+    centroid.centroid
     
 .. autofunction:: oxDNA_analysis_tools.centroid.centroid
 ```
@@ -112,9 +112,9 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.clustering.split_trajectory
-    oxDNA_analysis_tools.clustering.get_centroid
-    oxDNA_analysis_tools.clustering.perform_DBSCAN
+    clustering.split_trajectory
+    clustering.get_centroid
+    clustering.perform_DBSCAN
     
 .. autofunction:: oxDNA_analysis_tools.clustering.split_trajectory
 .. autofunction:: oxDNA_analysis_tools.clustering.get_centroid
@@ -132,9 +132,9 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.config.check
-    oxDNA_analysis_tools.config.set_chunk_size
-    oxDNA_analysis_tools.config.get_chunk_size
+    config.check
+    config.set_chunk_size
+    config.get_chunk_size
     
 .. autofunction:: oxDNA_analysis_tools.config.check
 .. autofunction:: oxDNA_analysis_tools.config.set_chunk_size
@@ -152,7 +152,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.contact_map.contact_map
+    contact_map.contact_map
     
 .. autofunction:: oxDNA_analysis_tools.contact_map.contact_map
 ```
@@ -168,7 +168,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.decimate.decimate
+    decimate.decimate
     
 .. autofunction:: oxDNA_analysis_tools.decimate.decimate
 ```
@@ -184,8 +184,8 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.deviations.deviations
-    oxDNA_analysis_tools.deviations.output
+    deviations.deviations
+    deviations.output
     
 .. autofunction:: oxDNA_analysis_tools.deviations.deviations
 .. autofunction:: oxDNA_analysis_tools.deviations.output
@@ -202,9 +202,9 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.distance.min_image
-    oxDNA_analysis_tools.distance.vectorized_min_image
-    oxDNA_analysis_tools.distance.distance
+    distance.min_image
+    distance.vectorized_min_image
+    distance.distance
     
 .. autofunction:: oxDNA_analysis_tools.distance.min_image
 .. autofunction:: oxDNA_analysis_tools.distance.vectorized_min_image
@@ -222,11 +222,11 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.db_to_force.parse_dot_bracket
-    oxDNA_analysis_tools.db_to_force.db_to_forcelist
+    db2forces.parse_dot_bracket
+    db2forces.db_to_forcelist
     
-.. autofunction:: oxDNA_analysis_tools.db_to_force.parse_dot_bracket
-.. autofunction:: oxDNA_analysis_tools.db_to_force.db_to_forcelist
+.. autofunction:: oxDNA_analysis_tools.db2forces.parse_dot_bracket
+.. autofunction:: oxDNA_analysis_tools.db2forces.db_to_forcelist
 ```
 
 ## Duplex angle plotter
@@ -240,7 +240,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.duplex_angle_plotter.get_angle_between
+    duplex_angle_plotter.get_angle_between
     
 .. autofunction:: oxDNA_analysis_tools.duplex_angle_plotter.get_angle_between
 ```
@@ -256,9 +256,9 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.duplex_finder.Duplex
-    oxDNA_analysis_tools.duplex_finder.find_duplex
-    oxDNA_analysis_tools.duplex_finder.duplex_finder
+    duplex_finder.Duplex
+    duplex_finder.find_duplex
+    duplex_finder.duplex_finder
     
 .. autoclass:: oxDNA_analysis_tools.duplex_finder.Duplex
 .. autofunction:: oxDNA_analysis_tools.duplex_finder.find_duplex
@@ -276,7 +276,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.file_info.file_info
+    file_info.file_info
     
 .. autofunction:: oxDNA_analysis_tools.file_info.file_info
 ```
@@ -292,9 +292,25 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.forces2db.forces2db
+    forces2db.forces2db
     
 .. autofunction:: oxDNA_analysis_tools.forces2db.forces2db
+```
+
+## IDconvert
+
+```{eval-rst}
+.. toctree::
+   :maxdepth: 2
+
+.. currentmodule:: oxDNA_analysis_tools
+
+.. autosummary::
+    :nosignatures:
+
+    IDconvert.IDconvert
+
+.. autofunction:: oxDNA_analysis_tools.IDconvert.IDconvert
 ```
 
 ## Mean
@@ -308,7 +324,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.mean.mean
+    mean.mean
     
 .. autofunction:: oxDNA_analysis_tools.mean.mean
 ```
@@ -324,7 +340,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.minify.minify
+    minify.minify
     
 .. autofunction:: oxDNA_analysis_tools.minify.minify
 ```
@@ -340,8 +356,8 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.multidimensional_scaling_mean.multidimensional_scaling_mean
-    oxDNA_analysis_tools.multidimensional_scaling_mean.distance_deviations
+    multidimensional_scaling_mean.multidimensional_scaling_mean
+    multidimensional_scaling_mean.distance_deviations
     
 .. autofunction:: oxDNA_analysis_tools.multidimensional_scaling_mean.multidimensional_scaling_mean
 .. autofunction:: oxDNA_analysis_tools.multidimensional_scaling_mean.distance_deviations
@@ -358,7 +374,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.output_bonds.output_bonds
+    output_bonds.output_bonds
     
 .. autofunction:: oxDNA_analysis_tools.output_bonds.output_bonds
 ```
@@ -374,9 +390,11 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.oxDNA_PDB.oxDNA_PDB
+    oxDNA_PDB.oxDNA_PDB
+    oxDNA_PDB.choose_reference_nucleotides
     
 .. autofunction:: oxDNA_analysis_tools.oxDNA_PDB.oxDNA_PDB
+.. autofunction:: oxDNA_analysis_tools.oxDNA_PDB.choose_reference_nucleotides
 ```
 
 ## Pairs to dot-bracket
@@ -390,7 +408,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.pairs2db.pairs2db
+    pairs2db.pairs2db
     
 .. autofunction:: oxDNA_analysis_tools.pairs2db.pairs2db
 ```
@@ -405,7 +423,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.PDB_oxDNA.PDB_oxDNA
+    PDB_oxDNA.PDB_oxDNA
     
 .. autofunction:: oxDNA_analysis_tools.PDB_oxDNA.PDB_oxDNA
 ```
@@ -421,9 +439,9 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.persistence_length.persistence_length
-    oxDNA_analysis_tools.persistence_length.get_r
-    oxDNA_analysis_tools.persistence_length.fit_PL
+    persistence_length.persistence_length
+    persistence_length.get_r
+    persistence_length.fit_PL
     
 .. autofunction:: oxDNA_analysis_tools.persistence_length.persistence_length
 .. autofunction:: oxDNA_analysis_tools.persistence_length.get_r
@@ -441,15 +459,30 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.pca.align_positions
-    oxDNA_analysis_tools.pca.map_confs_to_pcs
-    oxDNA_analysis_tools.pca.make_heatmap
-    oxDNA_analysis_tools.pca.pca
+    pca.align_positions
+    pca.map_confs_to_pcs
+    pca.make_heatmap
+    pca.pca
     
 .. autofunction:: oxDNA_analysis_tools.pca.align_positions
 .. autofunction:: oxDNA_analysis_tools.pca.map_confs_to_pcs
 .. autofunction:: oxDNA_analysis_tools.pca.make_heatmap
 .. autofunction:: oxDNA_analysis_tools.pca.pca
+```
+
+## Skeleton
+```{eval-rst}
+.. toctree::
+   :maxdepth: 2
+
+.. currentmodule:: oxDNA_analysis_tools
+
+.. autosummary::
+    :nosignatures:
+
+    skeleton.skeleton
+    
+.. autofunction:: oxDNA_analysis_tools.skeleton.skeleton
 ```
 
 ## Subset trajectory
@@ -463,7 +496,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.subset_trajectory.subset
+    subset_trajectory.subset
     
 .. autofunction:: oxDNA_analysis_tools.subset_trajectory.subset
 ```
@@ -479,7 +512,7 @@ decimate(align_output, decimate_output, ncpus=5, start=200, stride=10)
 .. autosummary::
     :nosignatures:
 
-    oxDNA_analysis_tools.superimpose.superimpose
+    superimpose.superimpose
     
 .. autofunction:: oxDNA_analysis_tools.superimpose.superimpose
 ```
