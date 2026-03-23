@@ -97,6 +97,12 @@ def main() -> None:
         default=None,
         help="Path to oxDNA sequence-dependent parameter file (used when --use-average-seq is not set)",
     )
+    parser.add_argument(
+        "--compute-dtype",
+        default="auto",
+        choices=["auto", "float16", "float32", "float64", "float8_e4m3fn", "float8_e5m2"],
+        help="Internal compute precision for oxDNA2Energy. Float8 modes quantize inputs and compute in float16.",
+    )
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"], help="Torch device")
     args = parser.parse_args()
 
@@ -136,6 +142,7 @@ def main() -> None:
         salt_concentration=args.salt,
         use_average_seq=args.use_average_seq,
         seq_dep_file=args.seq_dep_file,
+        compute_dtype=args.compute_dtype,
     ).to(device)
     result = model.compute_system_energies(
         positions=positions,
@@ -158,6 +165,7 @@ def main() -> None:
     print(f"N nucleotides:  {n}")
     print(f"N pairs (i<j):  {n_pairs}")
     print(f"Device:         {device}")
+    print(f"Compute dtype:  {args.compute_dtype}")
     print(f"T:              {args.temperature}")
     print(f"Salt (M):       {args.salt}")
     print(f"Avg seq:        {model.use_average_seq}")

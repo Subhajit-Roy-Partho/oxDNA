@@ -63,10 +63,14 @@ HYDR_THETA1_A, HYDR_THETA1_B = 1.5, 4.16038
 HYDR_THETA1_T0, HYDR_THETA1_TS, HYDR_THETA1_TC = 0.0, 0.7, 0.952381
 HYDR_THETA2_A, HYDR_THETA2_B = 1.5, 4.16038
 HYDR_THETA2_T0, HYDR_THETA2_TS, HYDR_THETA2_TC = 0.0, 0.7, 0.952381
+HYDR_THETA3_A, HYDR_THETA3_B = 1.5, 4.16038
+HYDR_THETA3_T0, HYDR_THETA3_TS, HYDR_THETA3_TC = 0.0, 0.7, 0.952381
 HYDR_THETA4_A, HYDR_THETA4_B = 0.46, 0.133855
 HYDR_THETA4_T0, HYDR_THETA4_TS, HYDR_THETA4_TC = PI, 0.7, 3.10559
 HYDR_THETA7_A, HYDR_THETA7_B = 4.0, 17.0526
 HYDR_THETA7_T0, HYDR_THETA7_TS, HYDR_THETA7_TC = PI*0.5, 0.45, 0.555556
+HYDR_THETA8_A, HYDR_THETA8_B = 4.0, 17.0526
+HYDR_THETA8_T0, HYDR_THETA8_TS, HYDR_THETA8_TC = PI*0.5, 0.45, 0.555556
 
 # Stacking parameters
 STCK_BASE_EPS_OXDNA2 = 1.3523
@@ -101,10 +105,14 @@ CRST_THETA1_A, CRST_THETA1_B = 2.25, 7.00545
 CRST_THETA1_T0, CRST_THETA1_TS, CRST_THETA1_TC = PI - 2.35, 0.58, 0.766284
 CRST_THETA2_A, CRST_THETA2_B = 1.70, 6.2469
 CRST_THETA2_T0, CRST_THETA2_TS, CRST_THETA2_TC = 1.0, 0.68, 0.865052
+CRST_THETA3_A, CRST_THETA3_B = 1.70, 6.2469
+CRST_THETA3_T0, CRST_THETA3_TS, CRST_THETA3_TC = 1.0, 0.68, 0.865052
 CRST_THETA4_A, CRST_THETA4_B = 1.50, 2.59556
 CRST_THETA4_T0, CRST_THETA4_TS, CRST_THETA4_TC = 0.0, 0.65, 1.02564
 CRST_THETA7_A, CRST_THETA7_B = 1.70, 6.2469
 CRST_THETA7_T0, CRST_THETA7_TS, CRST_THETA7_TC = 0.875, 0.68, 0.865052
+CRST_THETA8_A, CRST_THETA8_B = 1.70, 6.2469
+CRST_THETA8_T0, CRST_THETA8_TS, CRST_THETA8_TC = 0.875, 0.68, 0.865052
 
 # Coaxial stacking parameters
 CXST_R0, CXST_RC = 0.400, 0.6
@@ -142,7 +150,7 @@ class oxDNA2Energy(nn.Module):
 
     def __init__(self, temperature=0.1, salt_concentration=0.5,
                  use_average_seq=False, seq_dep_file=None,
-                 grooving=True, hb_multiplier=1.0):
+                 grooving=True, hb_multiplier=1.0, compute_dtype="auto"):
         """
         Initialize oxDNA2 energy calculator.
 
@@ -156,6 +164,12 @@ class oxDNA2Energy(nn.Module):
                 oxDNA2_sequence_dependent_parameters.txt.
             grooving: If True, use major-minor groove backbone site geometry (oxDNA2 default)
             hb_multiplier: Multiplier for hydrogen bonding strength (for special base types >= 300)
+            compute_dtype: Internal compute precision. Use "auto" to keep input dtype
+                except for the higher-precision bonded FENE path, or set explicitly
+                to "float16", "float32", or "float64". Float8 modes
+                ("float8_e4m3fn", "float8_e5m2") quantize inputs/orientations to
+                float8 and then run the math in float16, since PyTorch does not
+                provide full float8 kernel coverage for these operations.
         """
         super(oxDNA2Energy, self).__init__()
 
@@ -166,17 +180,30 @@ class oxDNA2Energy(nn.Module):
         self.seq_dep_resolved_path = None
         self.grooving = grooving
         self.hb_multiplier = hb_multiplier
+        self.compute_dtype, self.quantize_dtype = self._resolve_compute_dtype_option(compute_dtype)
 
         # Initialize average-sequence defaults first, then optionally override
         # true-base entries from the sequence-dependence file.
         stck_eps_value = STCK_BASE_EPS_OXDNA2 + STCK_FACT_EPS_OXDNA2 * self.T
         stck_shift_value = stck_eps_value * (1 - math.exp(-(STCK_RC - STCK_R0) * STCK_A))**2
-        self.stck_eps_matrix = torch.ones((5, 5), dtype=torch.float32) * stck_eps_value
-        self.stck_shift_matrix = torch.ones((5, 5), dtype=torch.float32) * stck_shift_value
+        self.register_buffer(
+            "stck_eps_matrix",
+            torch.ones((5, 5), dtype=torch.float32) * stck_eps_value,
+        )
+        self.register_buffer(
+            "stck_shift_matrix",
+            torch.ones((5, 5), dtype=torch.float32) * stck_shift_value,
+        )
 
         hydr_shift_value = HYDR_EPS_OXDNA2 * (1 - math.exp(-(HYDR_RC - HYDR_R0) * HYDR_A))**2
-        self.hydr_eps_matrix = torch.ones((5, 5), dtype=torch.float32) * HYDR_EPS_OXDNA2
-        self.hydr_shift_matrix = torch.ones((5, 5), dtype=torch.float32) * hydr_shift_value
+        self.register_buffer(
+            "hydr_eps_matrix",
+            torch.ones((5, 5), dtype=torch.float32) * HYDR_EPS_OXDNA2,
+        )
+        self.register_buffer(
+            "hydr_shift_matrix",
+            torch.ones((5, 5), dtype=torch.float32) * hydr_shift_value,
+        )
 
         if not self.use_average_seq:
             self._load_sequence_dependent_parameters(self.seq_dep_file)
@@ -205,6 +232,34 @@ class oxDNA2Energy(nn.Module):
         if base_letter not in mapping:
             raise ValueError(f"Unsupported base letter '{base_letter}' in sequence parameter file")
         return mapping[base_letter]
+
+    @staticmethod
+    def _resolve_compute_dtype_option(compute_dtype):
+        """Normalize precision configuration to runtime compute/quantize dtypes."""
+        if compute_dtype is None:
+            return None, None
+        if isinstance(compute_dtype, str):
+            normalized = compute_dtype.strip().lower()
+            if normalized == "auto":
+                return None, None
+            if normalized == "float32":
+                return torch.float32, None
+            if normalized == "float16":
+                return torch.float16, None
+            if normalized == "float64":
+                return torch.float64, None
+            if normalized == "float8_e4m3fn":
+                return torch.float16, torch.float8_e4m3fn
+            if normalized == "float8_e5m2":
+                return torch.float16, torch.float8_e5m2
+        elif compute_dtype in (torch.float16, torch.float32, torch.float64):
+            return compute_dtype, None
+
+        raise ValueError(
+            "compute_dtype must be one of: 'auto', 'float16', 'float32', "
+            "'float64', 'float8_e4m3fn', 'float8_e5m2', torch.float16, "
+            "torch.float32, torch.float64, or None"
+        )
 
     def _default_seq_dep_file_path(self):
         repo_root = Path(__file__).resolve().parent.parent
@@ -332,6 +387,112 @@ class oxDNA2Energy(nn.Module):
         if n3_neighbors.device != device or n5_neighbors.device != device:
             raise ValueError("neighbor tensors must be on the same device as positions")
 
+    @staticmethod
+    def _match_float_tensor(tensor, reference):
+        """Cast a floating-point tensor to the reference device/dtype when needed."""
+        if tensor.device != reference.device or tensor.dtype != reference.dtype:
+            return tensor.to(device=reference.device, dtype=reference.dtype)
+        return tensor
+
+    def _configured_compute_dtype(self, reference):
+        """Return the explicitly configured compute dtype, or the input dtype in auto mode."""
+        if self.compute_dtype is None:
+            return reference.dtype
+        if reference.device.type == "mps" and self.compute_dtype == torch.float64:
+            raise ValueError("compute_dtype='float64' is not supported on MPS")
+        if reference.device.type == "mps" and self.quantize_dtype is not None:
+            raise ValueError("float8 compute_dtype modes are not supported on MPS")
+        return self.compute_dtype
+
+    def _apply_explicit_compute_dtype(self, positions_p, positions_q, orientations_p, orientations_q):
+        """Cast geometry tensors when compute_dtype is explicitly configured."""
+        work_dtype = self._configured_compute_dtype(positions_p)
+        if self.compute_dtype is None and self.quantize_dtype is None:
+            return positions_p, positions_q, orientations_p, orientations_q
+        if self.quantize_dtype is not None:
+            return (
+                positions_p.to(dtype=self.quantize_dtype).to(dtype=work_dtype),
+                positions_q.to(dtype=self.quantize_dtype).to(dtype=work_dtype),
+                orientations_p.to(dtype=self.quantize_dtype).to(dtype=work_dtype),
+                orientations_q.to(dtype=self.quantize_dtype).to(dtype=work_dtype),
+            )
+        if work_dtype == positions_p.dtype:
+            return positions_p, positions_q, orientations_p, orientations_q
+        return (
+            positions_p.to(dtype=work_dtype),
+            positions_q.to(dtype=work_dtype),
+            orientations_p.to(dtype=work_dtype),
+            orientations_q.to(dtype=work_dtype),
+        )
+
+    @staticmethod
+    def _choose_pair_order(q_is_n3_of_p, p_tensor, q_tensor):
+        """
+        Return tensors ordered 5' -> 3' for stacking.
+
+        Args:
+            q_is_n3_of_p: bool tensor where True means q is the 3' neighbor of p.
+            p_tensor, q_tensor: tensors with matching leading dimension.
+        """
+        if q_is_n3_of_p.ndim != 1 or q_is_n3_of_p.shape[0] != p_tensor.shape[0]:
+            raise ValueError("q_is_n3_of_p must be a 1D tensor matching the pair dimension")
+
+        selector = q_is_n3_of_p
+        for _ in range(p_tensor.ndim - 1):
+            selector = selector.unsqueeze(-1)
+
+        first = torch.where(selector, p_tensor, q_tensor)
+        second = torch.where(selector, q_tensor, p_tensor)
+        return first, second
+
+    def _high_precision_compute_dtype(self, reference):
+        """
+        Use float64 for sensitive geometry on backends that support it.
+
+        oxDNA CPU and `oxdna_torch` both evaluate from double-precision input
+        coordinates. Promoting the bonded backbone geometry closes the residual
+        FENE gap for float32 CPU/CUDA inputs without changing MPS behavior.
+        """
+        if self.compute_dtype is not None:
+            return self._configured_compute_dtype(reference)
+        if reference.device.type != "mps" and reference.dtype in (
+            torch.float16,
+            torch.bfloat16,
+            torch.float32,
+        ):
+            return torch.float64
+        return reference.dtype
+
+    def backbone_pair_energy(self, positions_p, positions_q, orientations_p, orientations_q):
+        """
+        FENE energy for bonded pairs from COM positions/orientations.
+
+        The backbone distance is the most precision-sensitive bonded quantity in
+        the model. When possible, compute the site geometry in float64 to match
+        oxDNA CPU more closely, then cast the final energy back to the input dtype.
+        """
+        input_dtype = positions_p.dtype
+        work_dtype = self._high_precision_compute_dtype(positions_p)
+        if self.quantize_dtype is not None:
+            positions_p = positions_p.to(dtype=self.quantize_dtype).to(dtype=work_dtype)
+            positions_q = positions_q.to(dtype=self.quantize_dtype).to(dtype=work_dtype)
+            orientations_p = orientations_p.to(dtype=self.quantize_dtype).to(dtype=work_dtype)
+            orientations_q = orientations_q.to(dtype=self.quantize_dtype).to(dtype=work_dtype)
+        elif work_dtype != input_dtype:
+            positions_p = positions_p.to(dtype=work_dtype)
+            positions_q = positions_q.to(dtype=work_dtype)
+            orientations_p = orientations_p.to(dtype=work_dtype)
+            orientations_q = orientations_q.to(dtype=work_dtype)
+
+        back_p = self._backbone_site(positions_p, orientations_p)
+        back_q = self._backbone_site(positions_q, orientations_q)
+        r_backbone = torch.norm(back_q - back_p, dim=1)
+        energy = self.backbone_energy(r_backbone)
+
+        if energy.dtype != input_dtype:
+            energy = energy.to(dtype=input_dtype)
+        return energy
+
     def _backbone_site(self, positions, orientations):
         """
         Compute backbone interaction-site positions.
@@ -373,17 +534,21 @@ class oxDNA2Energy(nn.Module):
         mask_main = (r > rlow) & (r < rhigh)
         if torch.any(mask_main):
             tmp = 1 - torch.exp(-(r[mask_main] - r0) * a)
-            energy[mask_main] = eps * tmp**2 - shift
+            eps_main = eps[mask_main] if torch.is_tensor(eps) and eps.ndim > 0 else eps
+            shift_main = shift[mask_main] if torch.is_tensor(shift) and shift.ndim > 0 else shift
+            energy[mask_main] = eps_main * tmp**2 - shift_main
 
         # Low cutoff smoothing
         mask_low = (r > rclow) & (r <= rlow)
         if torch.any(mask_low):
-            energy[mask_low] = eps * blow * (r[mask_low] - rclow)**2
+            eps_low = eps[mask_low] if torch.is_tensor(eps) and eps.ndim > 0 else eps
+            energy[mask_low] = eps_low * blow * (r[mask_low] - rclow)**2
 
         # High cutoff smoothing
         mask_high = (r >= rhigh) & (r < rchigh)
         if torch.any(mask_high):
-            energy[mask_high] = eps * bhigh * (r[mask_high] - rchigh)**2
+            eps_high = eps[mask_high] if torch.is_tensor(eps) and eps.ndim > 0 else eps
+            energy[mask_high] = eps_high * bhigh * (r[mask_high] - rchigh)**2
 
         return energy
 
@@ -539,7 +704,8 @@ class oxDNA2Energy(nn.Module):
             print(f"Warning: FENE bond stretched beyond acceptable range!")
             print(f"  Maximum deviation from r0: {max_deviation:.6f} (limit: {FENE_DELTA})")
             # Return a very large energy to indicate bond breakage
-            return torch.full_like(r_backbone, 1e12)
+            max_finite = torch.finfo(r_backbone.dtype).max
+            return torch.full_like(r_backbone, min(1e12, max_finite))
 
         # FENE energy formula
         # The argument of log must be positive: 1 - (rbackr0^2 / DELTA^2) > 0
@@ -559,6 +725,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Total excluded volume energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Compute interaction site positions
         back_p = self._backbone_site(positions_p, orientations_p)
         back_q = self._backbone_site(positions_q, orientations_q)
@@ -605,6 +775,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Stacking energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Extract orientation vectors
         a1 = orientations_p[:, :, 0]  # v1 of particle p
         a2 = orientations_p[:, :, 1]  # v2 of particle p
@@ -635,8 +809,8 @@ class oxDNA2Energy(nn.Module):
         # Get sequence-dependent stacking parameters
         # In C++: _f1(rstackmod, STCK_F1, q->type, p->type)
         # Uses F1_EPS[STCK_F1][q->type][p->type] and F1_SHIFT[STCK_F1][q->type][p->type]
-        stck_eps_matrix = self.stck_eps_matrix.to(device=positions_p.device)
-        stck_shift_matrix = self.stck_shift_matrix.to(device=positions_p.device)
+        stck_eps_matrix = self._match_float_tensor(self.stck_eps_matrix, positions_p)
+        stck_shift_matrix = self._match_float_tensor(self.stck_shift_matrix, positions_p)
         eps_values = stck_eps_matrix[base_type_q, base_type_p]
         shift_values = stck_shift_matrix[base_type_q, base_type_p]
 
@@ -677,6 +851,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Excluded volume energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Compute interaction site positions
         a1 = orientations_p[:, :, 0]
         b1 = orientations_q[:, :, 0]
@@ -729,6 +907,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Hydrogen bonding energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Check if bases are Watson-Crick pairs (btype sum = 3)
         # This works for: A(0) + T(3) = 3, G(2) + C(1) = 3
         is_pair = (base_type_p + base_type_q) == 3
@@ -766,8 +948,8 @@ class oxDNA2Energy(nn.Module):
             # Get sequence-dependent epsilon and shift values
             # In C++: F1_EPS[HYDR_F1][q->type][p->type]
             # q->type and p->type are base types (0-4)
-            hydr_eps_matrix = self.hydr_eps_matrix.to(device=positions_p.device)
-            hydr_shift_matrix = self.hydr_shift_matrix.to(device=positions_p.device)
+            hydr_eps_matrix = self._match_float_tensor(self.hydr_eps_matrix, positions_p)
+            hydr_shift_matrix = self._match_float_tensor(self.hydr_shift_matrix, positions_p)
             eps_values = hydr_eps_matrix[base_type_q[in_range], base_type_p[in_range]]
             shift_values = hydr_shift_matrix[base_type_q[in_range], base_type_p[in_range]]
             hb_multi_subset = hb_multi[in_range]
@@ -795,11 +977,9 @@ class oxDNA2Energy(nn.Module):
                             HYDR_THETA2_A, HYDR_THETA2_B, HYDR_THETA2_T0,
                             HYDR_THETA2_TS, HYDR_THETA2_TC)
 
-            # Note: theta3 uses HYDR_THETA1 parameters (same as theta1)
-            # This is defined in model.h lines 88-92
             f4_t3 = self._f4(torch.acos(torch.clamp(cost3, -1, 1)),
-                            HYDR_THETA1_A, HYDR_THETA1_B, HYDR_THETA1_T0,
-                            HYDR_THETA1_TS, HYDR_THETA1_TC)
+                            HYDR_THETA3_A, HYDR_THETA3_B, HYDR_THETA3_T0,
+                            HYDR_THETA3_TS, HYDR_THETA3_TC)
 
             f4_t4 = self._f4(torch.acos(torch.clamp(cost4, -1, 1)),
                             HYDR_THETA4_A, HYDR_THETA4_B, HYDR_THETA4_T0,
@@ -809,11 +989,9 @@ class oxDNA2Energy(nn.Module):
                             HYDR_THETA7_A, HYDR_THETA7_B, HYDR_THETA7_T0,
                             HYDR_THETA7_TS, HYDR_THETA7_TC)
 
-            # Note: theta8 uses HYDR_THETA7 parameters (same as theta7)
-            # This is defined in model.h lines 106-110
             f4_t8 = self._f4(torch.acos(torch.clamp(cost8, -1, 1)),
-                            HYDR_THETA7_A, HYDR_THETA7_B, HYDR_THETA7_T0,
-                            HYDR_THETA7_TS, HYDR_THETA7_TC)
+                            HYDR_THETA8_A, HYDR_THETA8_B, HYDR_THETA8_T0,
+                            HYDR_THETA8_TS, HYDR_THETA8_TC)
 
             # Total hydrogen bonding energy
             energy[in_range] = f1 * f4_t1 * f4_t2 * f4_t3 * f4_t4 * f4_t7 * f4_t8
@@ -831,6 +1009,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Cross-stacking energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Extract orientation vectors
         a1 = orientations_p[:, :, 0]
         a3 = orientations_p[:, :, 2]
@@ -874,8 +1056,8 @@ class oxDNA2Energy(nn.Module):
                             CRST_THETA2_TS, CRST_THETA2_TC)
 
             f4_t3 = self._f4(torch.acos(torch.clamp(cost3, -1, 1)),
-                            CRST_THETA2_A, CRST_THETA2_B, CRST_THETA2_T0,
-                            CRST_THETA2_TS, CRST_THETA2_TC)
+                            CRST_THETA3_A, CRST_THETA3_B, CRST_THETA3_T0,
+                            CRST_THETA3_TS, CRST_THETA3_TC)
 
             # NOTE: oxDNA uses _custom_f4(cost) + _custom_f4(-cost) for these terms.
             # The symmetry is in cosine-space (cost -> -cost), not angle-space (theta -> -theta).
@@ -894,11 +1076,11 @@ class oxDNA2Energy(nn.Module):
                             CRST_THETA7_TS, CRST_THETA7_TC)
 
             f4_t8 = self._f4(torch.acos(torch.clamp(cost8, -1, 1)),
-                            CRST_THETA7_A, CRST_THETA7_B, CRST_THETA7_T0,
-                            CRST_THETA7_TS, CRST_THETA7_TC) + \
+                            CRST_THETA8_A, CRST_THETA8_B, CRST_THETA8_T0,
+                            CRST_THETA8_TS, CRST_THETA8_TC) + \
                     self._f4(torch.acos(torch.clamp(-cost8, -1, 1)),
-                            CRST_THETA7_A, CRST_THETA7_B, CRST_THETA7_T0,
-                            CRST_THETA7_TS, CRST_THETA7_TC)
+                            CRST_THETA8_A, CRST_THETA8_B, CRST_THETA8_T0,
+                            CRST_THETA8_TS, CRST_THETA8_TC)
 
             energy[in_range] = f2 * f4_t1 * f4_t2 * f4_t3 * f4_t4 * f4_t7 * f4_t8
 
@@ -915,6 +1097,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Coaxial stacking energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         # Extract orientation vectors
         a1 = orientations_p[:, :, 0]
         a3 = orientations_p[:, :, 2]
@@ -994,6 +1180,10 @@ class oxDNA2Energy(nn.Module):
         Returns:
             Debye-Huckel energy
         """
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
+
         energy = torch.zeros(positions_p.shape[0], device=positions_p.device, dtype=positions_p.dtype)
 
         # Skip bonded pairs
@@ -1058,6 +1248,11 @@ class oxDNA2Energy(nn.Module):
         """
         self._validate_system_inputs(positions, orientations, base_types, n3_neighbors, n5_neighbors)
 
+        work_dtype = self._configured_compute_dtype(positions)
+        if work_dtype != positions.dtype:
+            positions = positions.to(dtype=work_dtype)
+            orientations = orientations.to(dtype=work_dtype)
+
         device = positions.device
         dtype = positions.dtype
 
@@ -1103,10 +1298,12 @@ class oxDNA2Energy(nn.Module):
 
             if bonded_idx.numel() > 0:
                 # Backbone (FENE)
-                back_i = self._backbone_site(pos_i, ori_i)
-                back_j = self._backbone_site(pos_j, ori_j)
-                r_back = torch.norm(back_j[bonded_idx] - back_i[bonded_idx], dim=1)
-                fene[bonded_idx] = self.backbone_energy(r_back)
+                fene[bonded_idx] = self.backbone_pair_energy(
+                    pos_i[bonded_idx],
+                    pos_j[bonded_idx],
+                    ori_i[bonded_idx],
+                    ori_j[bonded_idx],
+                )
 
                 # Bonded excluded volume
                 bexc[bonded_idx] = self.bonded_excluded_volume(
@@ -1116,9 +1313,8 @@ class oxDNA2Energy(nn.Module):
                 # Stacking must be evaluated in 5' -> 3' order.
                 bonded_i = i_idx[bonded_idx]
                 bonded_j = j_idx[bonded_idx]
-                bonded_n3_i = n3_i[bonded_idx]
-                stack_p_idx = torch.where(bonded_n3_i == bonded_j, bonded_i, bonded_j)
-                stack_q_idx = torch.where(bonded_n3_i == bonded_j, bonded_j, bonded_i)
+                q_is_n3_of_p = n3_i[bonded_idx] == bonded_j
+                stack_p_idx, stack_q_idx = self._choose_pair_order(q_is_n3_of_p, bonded_i, bonded_j)
                 stck[bonded_idx] = self.stacking_energy(
                     positions[stack_p_idx],
                     positions[stack_q_idx],
@@ -1189,7 +1385,7 @@ class oxDNA2Energy(nn.Module):
 
     def forward(self, positions_p, positions_q, orientations_p, orientations_q,
                is_bonded, base_type_p, base_type_q,
-               is_terminus_p=None, is_terminus_q=None):
+               is_terminus_p=None, is_terminus_q=None, q_is_n3_of_p=None):
         """
         Compute total interaction energy between particles p and q.
 
@@ -1199,6 +1395,9 @@ class oxDNA2Energy(nn.Module):
             is_bonded: (N,) boolean tensor indicating bonded pairs
             base_type_p, base_type_q: (N,) int tensors with base types (0=A, 1=C, 2=G, 3=T)
             is_terminus_p, is_terminus_q: (N,) boolean tensors for terminus nucleotides
+            q_is_n3_of_p: (N,) boolean tensor for bonded pairs. True means q is the
+                3' neighbor of p, so the provided order is already 5' -> 3' for stacking.
+                If None, bonded inputs are assumed to already be ordered 5' -> 3'.
 
         Returns:
             total_energy: (N,) tensor of pairwise energies
@@ -1207,16 +1406,26 @@ class oxDNA2Energy(nn.Module):
             is_terminus_p = torch.zeros(positions_p.shape[0], dtype=torch.bool, device=positions_p.device)
         if is_terminus_q is None:
             is_terminus_q = torch.zeros(positions_q.shape[0], dtype=torch.bool, device=positions_p.device)
+        if q_is_n3_of_p is not None:
+            if q_is_n3_of_p.shape != is_bonded.shape:
+                raise ValueError("q_is_n3_of_p must have the same shape as is_bonded")
+            q_is_n3_of_p = q_is_n3_of_p.to(device=positions_p.device, dtype=torch.bool)
+
+        positions_p, positions_q, orientations_p, orientations_q = self._apply_explicit_compute_dtype(
+            positions_p, positions_q, orientations_p, orientations_q
+        )
 
         total_energy = torch.zeros(positions_p.shape[0], device=positions_p.device, dtype=positions_p.dtype)
 
         # Bonded interactions
         if torch.any(is_bonded):
             # Backbone (FENE)
-            back_p = self._backbone_site(positions_p[is_bonded], orientations_p[is_bonded])
-            back_q = self._backbone_site(positions_q[is_bonded], orientations_q[is_bonded])
-            r_backbone = torch.norm(back_q - back_p, dim=1)
-            total_energy[is_bonded] += self.backbone_energy(r_backbone)
+            total_energy[is_bonded] += self.backbone_pair_energy(
+                positions_p[is_bonded],
+                positions_q[is_bonded],
+                orientations_p[is_bonded],
+                orientations_q[is_bonded],
+            )
 
             # Bonded excluded volume
             total_energy[is_bonded] += self.bonded_excluded_volume(
@@ -1224,10 +1433,22 @@ class oxDNA2Energy(nn.Module):
                 orientations_p[is_bonded], orientations_q[is_bonded])
 
             # Stacking
+            stack_pos_p = positions_p[is_bonded]
+            stack_pos_q = positions_q[is_bonded]
+            stack_ori_p = orientations_p[is_bonded]
+            stack_ori_q = orientations_q[is_bonded]
+            stack_base_p = base_type_p[is_bonded]
+            stack_base_q = base_type_q[is_bonded]
+            if q_is_n3_of_p is not None:
+                bonded_q_is_n3 = q_is_n3_of_p[is_bonded]
+                stack_pos_p, stack_pos_q = self._choose_pair_order(bonded_q_is_n3, stack_pos_p, stack_pos_q)
+                stack_ori_p, stack_ori_q = self._choose_pair_order(bonded_q_is_n3, stack_ori_p, stack_ori_q)
+                stack_base_p, stack_base_q = self._choose_pair_order(bonded_q_is_n3, stack_base_p, stack_base_q)
+
             total_energy[is_bonded] += self.stacking_energy(
-                positions_p[is_bonded], positions_q[is_bonded],
-                orientations_p[is_bonded], orientations_q[is_bonded],
-                base_type_p[is_bonded], base_type_q[is_bonded])
+                stack_pos_p, stack_pos_q,
+                stack_ori_p, stack_ori_q,
+                stack_base_p, stack_base_q)
 
         # Non-bonded interactions
         if torch.any(~is_bonded):

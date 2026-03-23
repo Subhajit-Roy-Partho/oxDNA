@@ -14,6 +14,26 @@ The HTML documentation can also be generated locally by running `make html` in t
 
 Installation instructions can be found in the `docs/source/install.md` file or online [here](https://lorenzo-rovigatti.github.io/oxDNA/install.html).
 
+## Torch oxDNA2
+
+This repository also contains a PyTorch oxDNA2 energy implementation under `subho/`.
+
+Key files:
+
+* `subho/oxdna2_pytorch.py`: oxDNA2 energy model in PyTorch
+* `subho/example_torch_usage.py`: example system-level Torch evaluation
+* `subho/compare_single_frame_to_oat.py`: one-frame Torch vs oxDNA CPU validation
+* `INFO.md`: current technical notes for the Torch layer and validation workflow
+
+Example commands:
+
+```bash
+python subho/example_torch_usage.py --top subho/example/dsdna8.top --conf subho/example/init.dat
+python subho/compare_single_frame_to_oat.py --top subho/example/dsdna8.top --frame subho/example/init.dat
+```
+
+`subho/compare_single_frame_to_oat.py` uses oxDNA CPU `pair_energy` output from `output_bonds` as ground truth on the same single-frame `.dat` file, then compares those term-by-term energies against the current Torch implementation. The script handles the accounting mismatch explicitly: `output_bonds -v` produces raw per-nucleotide overlays with full pair energy assigned to both endpoints, while the Torch system path reports split per-nucleotide energies.
+
 ## Examples
 
 The `examples` folder contains many examples showing the main features of the code. Note that the `METADYNAMICS`, `OXPY` and `OXPY_REMD` examples require `oxpy`, oxDNA's python bindings that can be compiled by setting `-DPython=ON` during the [compilation stage](https://lorenzo-rovigatti.github.io/oxDNA/install.html#cmake-options).
