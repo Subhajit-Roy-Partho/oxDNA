@@ -291,8 +291,13 @@ def main():
 
     # Initialize energy model
     print("Initializing oxDNA2 energy model...")
-    # Use default parameters (T=0.1, salt=0.5M)
-    model = oxDNA2Energy(temperature=0.1, salt_concentration=0.5)
+    # Reference JSON files in this folder were generated with average-sequence settings.
+    model = oxDNA2Energy(
+        temperature=0.1,
+        salt_concentration=0.5,
+        use_average_seq=True,
+        grooving=False,
+    )
     print()
 
     # Compute energies

@@ -87,6 +87,16 @@ def main() -> None:
     parser.add_argument("--conf", default="subho/example/init.dat", help="Path to configuration (.dat)")
     parser.add_argument("--temperature", type=float, default=0.1, help="oxDNA simulation temperature")
     parser.add_argument("--salt", type=float, default=0.5, help="Salt concentration in M")
+    parser.add_argument(
+        "--use-average-seq",
+        action="store_true",
+        help="Use sequence-averaged oxDNA2 parameters instead of sequence-dependent file",
+    )
+    parser.add_argument(
+        "--seq-dep-file",
+        default=None,
+        help="Path to oxDNA sequence-dependent parameter file (used when --use-average-seq is not set)",
+    )
     parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "mps"], help="Torch device")
     args = parser.parse_args()
 
@@ -121,7 +131,12 @@ def main() -> None:
     n3_neighbors = n3_neighbors.to(device)
     n5_neighbors = n5_neighbors.to(device)
 
-    model = oxDNA2Energy(temperature=args.temperature, salt_concentration=args.salt).to(device)
+    model = oxDNA2Energy(
+        temperature=args.temperature,
+        salt_concentration=args.salt,
+        use_average_seq=args.use_average_seq,
+        seq_dep_file=args.seq_dep_file,
+    ).to(device)
     result = model.compute_system_energies(
         positions=positions,
         orientations=orientations,
@@ -145,6 +160,9 @@ def main() -> None:
     print(f"Device:         {device}")
     print(f"T:              {args.temperature}")
     print(f"Salt (M):       {args.salt}")
+    print(f"Avg seq:        {model.use_average_seq}")
+    if not model.use_average_seq:
+        print(f"Seq dep file:   {model.seq_dep_resolved_path}")
     print()
     print("System energy by term (pairwise sums, oxDNA units):")
     for name, val in terms.items():

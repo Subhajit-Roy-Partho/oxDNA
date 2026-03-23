@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import math
+from pathlib import Path
 
 # Define constants (from src/model.h)
 PI = math.pi
@@ -140,15 +141,20 @@ class oxDNA2Energy(nn.Module):
     """
 
     def __init__(self, temperature=0.1, salt_concentration=0.5,
-                 use_average_seq=True, grooving=False, hb_multiplier=1.0):
+                 use_average_seq=False, seq_dep_file=None,
+                 grooving=True, hb_multiplier=1.0):
         """
         Initialize oxDNA2 energy calculator.
 
         Args:
             temperature: Temperature in simulation units (T=0.1 corresponds to ~300K)
             salt_concentration: Salt concentration in Molars
-            use_average_seq: If True, use sequence-averaged parameters
-            grooving: If True, use major-minor groove backbone site geometry
+            use_average_seq: If True, use sequence-averaged parameters.
+                If False, load sequence-dependent parameters from seq_dep_file.
+            seq_dep_file: Path to oxDNA sequence-dependence file. If None and
+                use_average_seq=False, defaults to repo-root
+                oxDNA2_sequence_dependent_parameters.txt.
+            grooving: If True, use major-minor groove backbone site geometry (oxDNA2 default)
             hb_multiplier: Multiplier for hydrogen bonding strength (for special base types >= 300)
         """
         super(oxDNA2Energy, self).__init__()
@@ -156,29 +162,24 @@ class oxDNA2Energy(nn.Module):
         self.T = temperature
         self.salt_concentration = salt_concentration
         self.use_average_seq = use_average_seq
+        self.seq_dep_file = seq_dep_file
+        self.seq_dep_resolved_path = None
         self.grooving = grooving
         self.hb_multiplier = hb_multiplier
 
-        # Initialize stacking parameters with sequence dependence (oxDNA2 values)
-        # F1_EPS[STCK_F1][base_type_i][base_type_j] stores epsilon values
-        # F1_SHIFT[STCK_F1][base_type_i][base_type_j] stores shift values
-        # Base types: 0=A, 1=C, 2=G, 3=T, 4=dummy
+        # Initialize average-sequence defaults first, then optionally override
+        # true-base entries from the sequence-dependence file.
         stck_eps_value = STCK_BASE_EPS_OXDNA2 + STCK_FACT_EPS_OXDNA2 * self.T
         stck_shift_value = stck_eps_value * (1 - math.exp(-(STCK_RC - STCK_R0) * STCK_A))**2
         self.stck_eps_matrix = torch.ones((5, 5), dtype=torch.float32) * stck_eps_value
         self.stck_shift_matrix = torch.ones((5, 5), dtype=torch.float32) * stck_shift_value
 
-        # Initialize hydrogen bonding parameters with sequence dependence
-        # F1_EPS[HYDR_F1][base_type_i][base_type_j] stores epsilon values
-        # F1_SHIFT[HYDR_F1][base_type_i][base_type_j] stores shift values
-        # Base types: 0=A, 1=C, 2=G, 3=T, 4=dummy
         hydr_shift_value = HYDR_EPS_OXDNA2 * (1 - math.exp(-(HYDR_RC - HYDR_R0) * HYDR_A))**2
         self.hydr_eps_matrix = torch.ones((5, 5), dtype=torch.float32) * HYDR_EPS_OXDNA2
         self.hydr_shift_matrix = torch.ones((5, 5), dtype=torch.float32) * hydr_shift_value
 
-        # Note: If sequence-dependent parameters are needed, they should be loaded here
-        # For now, using average values (oxDNA2 defaults)
-        # In sequence-dependent mode, different values would be used for A-T vs G-C pairs
+        if not self.use_average_seq:
+            self._load_sequence_dependent_parameters(self.seq_dep_file)
 
         # Debye-Huckel parameters
         self.dh_prefactor = 0.0543
@@ -197,6 +198,106 @@ class oxDNA2Energy(nn.Module):
 
         self.dh_B = -(math.exp(-x / l) * q * q * (x + l) * (x + l)) / (-4.0 * x * x * x * l * l * q)
         self.dh_RC = x * (q * x + 3.0 * q * l) / (q * (x + l))
+
+    @staticmethod
+    def _base_letter_to_index(base_letter):
+        mapping = {"A": 0, "C": 1, "G": 2, "T": 3, "D": 4}
+        if base_letter not in mapping:
+            raise ValueError(f"Unsupported base letter '{base_letter}' in sequence parameter file")
+        return mapping[base_letter]
+
+    def _default_seq_dep_file_path(self):
+        repo_root = Path(__file__).resolve().parent.parent
+        return repo_root / "oxDNA2_sequence_dependent_parameters.txt"
+
+    @staticmethod
+    def _parse_seq_dep_file(path):
+        params = {}
+        with path.open("r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                params[key.strip()] = float(value.strip())
+        return params
+
+    @staticmethod
+    def _get_required_param(params, key):
+        if key not in params:
+            raise KeyError(f"Missing required key '{key}' in sequence parameter file")
+        return params[key]
+
+    def _resolve_seq_dep_file(self, seq_dep_file):
+        if seq_dep_file is None:
+            return self._default_seq_dep_file_path()
+        p = Path(seq_dep_file).expanduser()
+        if p.is_absolute():
+            return p
+        return (Path.cwd() / p).resolve()
+
+    def _load_sequence_dependent_parameters(self, seq_dep_file):
+        """
+        Load sequence-dependent STCK/HYDR parameters from oxDNA-style key=value file.
+
+        This mirrors DNAInteraction::init() logic for !_average in C++:
+        - STCK_FACT_EPS temperature scaling with (1 - f + 9*T*f)
+        - STCK_X_Y for all true-base pairs, optional dummy pairs
+        - HYDR_A_T / HYDR_T_A fallback and HYDR_G_C / HYDR_C_G fallback
+        """
+        path = self._resolve_seq_dep_file(seq_dep_file)
+        if not path.exists():
+            raise FileNotFoundError(f"Sequence parameter file not found: {path}")
+        self.seq_dep_resolved_path = str(path)
+
+        params = self._parse_seq_dep_file(path)
+        stck_fact_eps = self._get_required_param(params, "STCK_FACT_EPS")
+        stck_temp_scale = (1.0 - stck_fact_eps + (self.T * 9.0 * stck_fact_eps))
+        stck_shift_factor = (1 - math.exp(-(STCK_RC - STCK_R0) * STCK_A))**2
+        hydr_shift_factor = (1 - math.exp(-(HYDR_RC - HYDR_R0) * HYDR_A))**2
+
+        # STCK for true bases (required)
+        for bi in "ACGT":
+            for bj in "ACGT":
+                key = f"STCK_{bi}_{bj}"
+                raw_eps = self._get_required_param(params, key)
+                i = self._base_letter_to_index(bi)
+                j = self._base_letter_to_index(bj)
+                eps = raw_eps * stck_temp_scale
+                self.stck_eps_matrix[i, j] = eps
+                self.stck_shift_matrix[i, j] = eps * stck_shift_factor
+
+        # Optional STCK entries for dummy/base and dummy/dummy
+        for bi in "ACGTD":
+            for bj in "ACGTD":
+                i = self._base_letter_to_index(bi)
+                j = self._base_letter_to_index(bj)
+                if i != 4 and j != 4:
+                    continue
+                key = f"STCK_{bi}_{bj}"
+                if key in params:
+                    eps = params[key] * stck_temp_scale
+                    self.stck_eps_matrix[i, j] = eps
+                    self.stck_shift_matrix[i, j] = eps * stck_shift_factor
+
+        # HB: allow either ordering and mirror symmetrically.
+        at_eps = params.get("HYDR_A_T", params.get("HYDR_T_A"))
+        if at_eps is None:
+            raise KeyError("Missing both HYDR_A_T and HYDR_T_A in sequence parameter file")
+        self.hydr_eps_matrix[0, 3] = at_eps
+        self.hydr_eps_matrix[3, 0] = at_eps
+        self.hydr_shift_matrix[0, 3] = at_eps * hydr_shift_factor
+        self.hydr_shift_matrix[3, 0] = at_eps * hydr_shift_factor
+
+        gc_eps = params.get("HYDR_G_C", params.get("HYDR_C_G"))
+        if gc_eps is None:
+            raise KeyError("Missing both HYDR_G_C and HYDR_C_G in sequence parameter file")
+        self.hydr_eps_matrix[2, 1] = gc_eps
+        self.hydr_eps_matrix[1, 2] = gc_eps
+        self.hydr_shift_matrix[2, 1] = gc_eps * hydr_shift_factor
+        self.hydr_shift_matrix[1, 2] = gc_eps * hydr_shift_factor
 
     @staticmethod
     def _split_pair_energies(pair_energy, i_idx, j_idx, n_particles):
