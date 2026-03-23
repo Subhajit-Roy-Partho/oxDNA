@@ -12,10 +12,12 @@ oxDNA analysis stack. The comparison covers:
 from __future__ import annotations
 
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
+import torch
 from oxdna_torch import OxDNAEnergy, read_configuration as pkg_read_configuration
 from oxdna_torch import read_topology as pkg_read_topology
 
@@ -32,6 +34,8 @@ import subprocess
 
 
 TERM_ORDER = ["FENE", "BEXC", "STCK", "NEXC", "HB", "CRSTCK", "CXSTCK", "DH", "total"]
+SPEED_WARMUP_RUNS = 5
+SPEED_MEASURED_RUNS = 20
 
 
 @dataclass(frozen=True)
@@ -219,6 +223,97 @@ def package_sums(top_path: Path, frame_path: Path, case: Case) -> Dict[str, floa
     return sums
 
 
+def _synchronize_device(device: str) -> None:
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif device == "mps" and torch.backends.mps.is_available():
+        torch.mps.synchronize()
+
+
+def benchmark_callable(fn, device: str, warmup: int = SPEED_WARMUP_RUNS, repeats: int = SPEED_MEASURED_RUNS) -> float:
+    """Return average milliseconds per invocation for a callable."""
+    for _ in range(warmup):
+        fn()
+    _synchronize_device(device)
+
+    elapsed = 0.0
+    for _ in range(repeats):
+        _synchronize_device(device)
+        start = time.perf_counter()
+        fn()
+        _synchronize_device(device)
+        elapsed += time.perf_counter() - start
+    return elapsed * 1000.0 / repeats
+
+
+def current_impl_speed(top_path: Path, frame_path: Path, case: Case, device: str) -> float:
+    n, base_types, n3_neighbors, n5_neighbors = read_topology(top_path)
+    positions, orientations = read_configuration(frame_path, n)
+    positions = positions.to(device).requires_grad_(True)
+    orientations = orientations.to(device).requires_grad_(True)
+    base_types = base_types.to(device)
+    n3_neighbors = n3_neighbors.to(device)
+    n5_neighbors = n5_neighbors.to(device)
+
+    model = oxDNA2Energy(
+        temperature=parse_temperature_token(case.temperature_token),
+        salt_concentration=case.salt,
+        use_average_seq=case.use_average_seq,
+        seq_dep_file=None,
+        grooving=True,
+        compute_dtype="float32",
+    ).to(device)
+
+    def run_once():
+        return model.compute_system_energies(
+            positions=positions,
+            orientations=orientations,
+            base_types=base_types,
+            n3_neighbors=n3_neighbors,
+            n5_neighbors=n5_neighbors,
+        )
+
+    return benchmark_callable(run_once, device)
+
+
+def package_speed(top_path: Path, frame_path: Path, case: Case, device: str) -> float | None:
+    if device == "mps":
+        # This package currently materializes float64 tensors in paths that MPS cannot accept.
+        try:
+            topology = pkg_read_topology(top_path)
+            state = pkg_read_configuration(frame_path, topology).to(torch.device("mps"))
+            model = OxDNAEnergy(
+                topology=topology,
+                temperature=parse_temperature_token(case.temperature_token),
+                seq_dependent=not case.use_average_seq,
+                use_oxdna2=True,
+                salt_concentration=case.salt,
+            ).to("mps")
+            _ = model(state)
+        except Exception:
+            return None
+
+    topology = pkg_read_topology(top_path)
+    state = pkg_read_configuration(frame_path, topology)
+    if device != "cpu":
+        state = state.to(torch.device(device))
+    state = state.requires_grad_(True)
+    model = OxDNAEnergy(
+        topology=topology,
+        temperature=parse_temperature_token(case.temperature_token),
+        seq_dependent=not case.use_average_seq,
+        use_oxdna2=True,
+        salt_concentration=case.salt,
+    )
+    if device == "cpu":
+        model = model.to(torch.float32)
+
+    def run_once():
+        return model(state)
+
+    return benchmark_callable(run_once, device)
+
+
 def error_pct(value: float, ref: float) -> float:
     return abs(value - ref) / abs(ref) * 100.0
 
@@ -258,6 +353,7 @@ def generate_markdown(results: List[Dict[str, object]]) -> str:
     lines.append("- `oxdna_torch`: installed `../oxdna-torch` package")
     lines.append("")
     lines.append("All cases below are evaluated under oxDNA2 average-sequence settings so the three implementations are compared on the same force field.")
+    lines.append("The speed table below measures a single differentiable forward pass with a small warm-up (`5` runs) and `20` timed iterations per case.")
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -295,12 +391,34 @@ def generate_markdown(results: List[Dict[str, object]]) -> str:
             )
 
     lines.append("")
+    lines.append("## Speed")
+    lines.append("")
+    lines.append("Timings are average wall-clock milliseconds per forward pass. Current Torch timings use `compute_dtype=\"float32\"` with autograd-enabled inputs. `oxdna_torch` currently cannot run on MPS here because its float64-first path is rejected by Metal, so the GPU column is marked as unsupported.")
+    lines.append("These are small test systems, so GPU launch overhead is part of the result and MPS can be slower than CPU on this workload.")
+    lines.append("")
+    lines.append("| Case | Current CPU (ms) | Current MPS (ms) | MPS speedup vs CPU | oxdna_torch CPU (ms) | Current CPU speedup vs oxdna_torch | oxdna_torch MPS |")
+    lines.append("|---|---:|---:|---:|---:|---:|---|")
+    for result in results:
+        speed = result["speed"]
+        current_cpu = speed["current_cpu_ms"]
+        current_mps = speed["current_mps_ms"]
+        package_cpu = speed["package_cpu_ms"]
+        package_mps = speed["package_mps_ms"]
+        mps_speedup = current_cpu / current_mps if current_mps and current_mps > 0 else float("nan")
+        package_speedup = package_cpu / current_cpu if package_cpu and package_cpu > 0 else float("nan")
+        lines.append(
+            f"| {result['title']} | {current_cpu:.3f} | {current_mps:.3f} | {mps_speedup:.2f}x | "
+            f"{package_cpu:.3f} | {package_speedup:.2f}x | {package_mps} |"
+        )
+
+    lines.append("")
     lines.append("## Notes")
     lines.append("")
     lines.append("- Relative errors are reported only when the C++ ground-truth term is nonzero.")
     lines.append("- For zero-reference terms, the table shows either `0` or an absolute deviation in oxDNA energy units.")
     lines.append("- The `FORCE_FIELD` case uses a temporary conversion from the newer sequence-style topology format to old-format connectivity so both PyTorch implementations can read the same frame.")
     lines.append("- `current-f64` is the tightest match overall in this repo when CPU double precision is available.")
+    lines.append("- `oxdna_torch` does not currently provide a working MPS path on this machine without source changes because it materializes float64 tensors in MPS-bound code paths.")
     lines.append("")
     return "\n".join(lines)
 
@@ -319,6 +437,10 @@ def main() -> None:
             current_f32 = current_impl_sums(top_path, frame_path, case, "float32")
             current_f64 = current_impl_sums(top_path, frame_path, case, "float64")
             pkg = package_sums(top_path, frame_path, case)
+            current_cpu_ms = current_impl_speed(top_path, frame_path, case, "cpu")
+            current_mps_ms = current_impl_speed(top_path, frame_path, case, "mps")
+            package_cpu_ms = package_speed(top_path, frame_path, case, "cpu")
+            package_mps_ms = package_speed(top_path, frame_path, case, "mps")
 
             term_rows = {}
             for term in TERM_ORDER:
@@ -349,6 +471,12 @@ def main() -> None:
                     "nonzero_terms": nonzero_terms,
                     "notes": case.notes,
                     "term_rows": term_rows,
+                    "speed": {
+                        "current_cpu_ms": current_cpu_ms,
+                        "current_mps_ms": current_mps_ms,
+                        "package_cpu_ms": package_cpu_ms,
+                        "package_mps_ms": "unsupported" if package_mps_ms is None else f"{package_mps_ms:.3f}",
+                    },
                 }
             )
 

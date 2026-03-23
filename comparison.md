@@ -8,6 +8,7 @@ Compared implementations:
 - `oxdna_torch`: installed `../oxdna-torch` package
 
 All cases below are evaluated under oxDNA2 average-sequence settings so the three implementations are compared on the same force field.
+The speed table below measures a single differentiable forward pass with a small warm-up (`5` runs) and `20` timed iterations per case.
 
 ## Summary
 
@@ -71,10 +72,22 @@ All cases below are evaluated under oxDNA2 average-sequence settings so the thre
 | `DH` | 0.04901923 | 0.04901924 | 0.000005% | 0.04901919 | 0.000087% | 0.04901919 | 0.000087% | current-f32 |
 | `total` | -14.57820477 | -14.57819748 | 0.000050% | -14.57820647 | 0.000012% | -14.57820555 | 0.000005% | oxdna_torch |
 
+## Speed
+
+Timings are average wall-clock milliseconds per forward pass. Current Torch timings use `compute_dtype="float32"` with autograd-enabled inputs. `oxdna_torch` currently cannot run on MPS here because its float64-first path is rejected by Metal, so the GPU column is marked as unsupported.
+These are small test systems, so GPU launch overhead is part of the result and MPS can be slower than CPU on this workload.
+
+| Case | Current CPU (ms) | Current MPS (ms) | MPS speedup vs CPU | oxdna_torch CPU (ms) | Current CPU speedup vs oxdna_torch | oxdna_torch MPS |
+|---|---:|---:|---:|---:|---:|---|
+| DSDNA8 Duplex | 1.611 | 118.938 | 0.01x | 1.453 | 0.90x | unsupported |
+| FORCE_FIELD 3-Strand | 1.648 | 127.413 | 0.01x | 1.445 | 0.88x | unsupported |
+| SSDNA15 MD | 0.805 | 41.095 | 0.02x | 0.679 | 0.84x | unsupported |
+
 ## Notes
 
 - Relative errors are reported only when the C++ ground-truth term is nonzero.
 - For zero-reference terms, the table shows either `0` or an absolute deviation in oxDNA energy units.
 - The `FORCE_FIELD` case uses a temporary conversion from the newer sequence-style topology format to old-format connectivity so both PyTorch implementations can read the same frame.
 - `current-f64` is the tightest match overall in this repo when CPU double precision is available.
+- `oxdna_torch` does not currently provide a working MPS path on this machine without source changes because it materializes float64 tensors in MPS-bound code paths.
 
