@@ -142,11 +142,30 @@ Benchmarks use DNA2 systems from [ErikPoppleton/oxDNA_performance](https://githu
 System sizes: N=128, N=512, N=4096, N=32768 nucleotides  
 Simulation: 10M MD steps, DNA2 interaction, T=20°C, salt=1.0M
 
-| System | Backend | List | Steps/sec |
-|--------|---------|------|-----------|
-| *to be filled after runs* | | | |
+All benchmarks use DNA2 interaction, 20°C, 1.0 M salt, 50,000 MD steps.
 
-See `benchmarks/results/` for raw output.
+### N64 (1024 nucleotides, 128 strands)
+
+| Backend | List type | SimBackend (s) | Steps/s | Forces (s) | Lists (s) |
+|---------|-----------|----------------|---------|------------|-----------|
+| CPU     | verlet    | 79.3           | 630     | -          | -         |
+| CPU     | edge      | 79.3           | 631     | -          | -         |
+| GPU     | verlet    | 6.18           | 8,085   | 4.39 (71%) | 0.12 (2%) |
+| GPU     | verlet+use_edge | 3.27     | 15,295  | 1.46 (45%) | 0.13 (4%) |
+| GPU     | edge (new) | 3.30          | 15,175  | 1.46 (44%) | 0.13 (4%) |
+
+**GPU speedup**: edge list gives **~89% speedup** over plain Verlet.  
+**Force reduction**: 4.39s → 1.46s (3× faster forces via Newton's 3rd law + better memory access).  
+**New CUDAEdgeList**: matches `verlet+use_edge` performance with ~½ the neighbour-matrix memory.  
+**CPU**: No MD throughput difference (MD backend iterates per-particle; edge benefit shows in `get_potential_interactions()` callers).
+
+### N512 and N4096
+
+See `benchmarks/results/summary.csv` for results after the benchmark run completes.
+
+### Raw data
+
+See `benchmarks/results/` for per-run log files with full timing breakdowns.
 
 ---
 
