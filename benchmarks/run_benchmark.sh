@@ -5,6 +5,7 @@
 #
 # Benchmarks Verlet list vs EdgeList for CPU and GPU.
 # Uses DNA2 systems from ErikPoppleton/oxDNA_performance.
+# Records wall time, steps/s, and peak VRAM usage per run.
 #
 # Usage:
 #   ./run_benchmark.sh [build_dir] [steps]
@@ -38,22 +39,61 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
     echo "GPU detected: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 fi
 
-echo "case,time_ms,steps_per_sec" > "${RESULTS}/summary.csv"
+echo "case,time_ms,steps_per_sec,vram_mb" > "${RESULTS}/summary.csv"
 
-# run_case NAME INPUT_FILE OUT_FILE LOG_DIR
+# _poll_vram PEAK_FILE
+# Background VRAM poller — writes running max to PEAK_FILE every 0.25 s.
+_poll_vram() {
+    local peak_file="$1"
+    while true; do
+        local cur
+        cur=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+        local prev
+        prev=$(cat "${peak_file}" 2>/dev/null || echo 0)
+        if [ -n "${cur}" ] && [ "${cur}" -gt "${prev}" ] 2>/dev/null; then
+            echo "${cur}" > "${peak_file}"
+        fi
+        sleep 0.25
+    done
+}
+
+# run_case NAME INPUT_FILE OUT_FILE LOG_DIR IS_GPU
 run_case() {
     local name="$1"
     local input_file="$2"
     local out_file="$3"
     local log_dir="$4"
+    local is_gpu="${5:-0}"
 
     echo -n "  ${name} ... "
+
+    # VRAM: capture baseline and start poller for GPU runs
+    local vram_str="N/A"
+    local peak_file poller_pid baseline_vram
+    if [ "${is_gpu}" -eq 1 ] && [ "${GPU_AVAILABLE}" -eq 1 ]; then
+        baseline_vram=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+        peak_file=$(mktemp)
+        echo "${baseline_vram}" > "${peak_file}"
+        _poll_vram "${peak_file}" &
+        poller_pid=$!
+    fi
+
     local t_start t_end elapsed ret
     t_start=$(date +%s%N)
     "${OXDNA}" "${input_file}" > "${out_file}" 2>&1
     ret=$?
     t_end=$(date +%s%N)
     elapsed=$(( (t_end - t_start) / 1000000 ))
+
+    # Stop VRAM poller and compute delta
+    if [ "${is_gpu}" -eq 1 ] && [ "${GPU_AVAILABLE}" -eq 1 ]; then
+        kill "${poller_pid}" 2>/dev/null
+        wait "${poller_pid}" 2>/dev/null || true
+        local peak_vram
+        peak_vram=$(cat "${peak_file}" 2>/dev/null || echo "${baseline_vram}")
+        rm -f "${peak_file}"
+        vram_str=$(( peak_vram - baseline_vram ))
+    fi
 
     if [ "${ret}" -ne 0 ]; then
         echo "FAILED"
@@ -71,8 +111,8 @@ run_case() {
         sps="N/A"
     fi
 
-    echo "${elapsed}ms (wall) / sim=${wall_sec:-?}s — ${sps} steps/s"
-    echo "${name},${elapsed},${sps}" >> "${RESULTS}/summary.csv"
+    echo "${elapsed}ms (wall) / sim=${wall_sec:-?}s — ${sps} steps/s  VRAM=${vram_str} MB"
+    echo "${name},${elapsed},${sps},${vram_str}" >> "${RESULTS}/summary.csv"
 }
 
 # make_input OUTPUT_FILE EXTRA_PARAMS TOP CONF TMPDIR
@@ -140,7 +180,7 @@ for SIZE in ${SIZES}; do
     echo "=== ${SIZE} ($(wc -l < "${TOP}") lines topology) ==="
 
     # ----------------------------------------------------------------
-    # CPU benchmarks
+    # CPU benchmarks (no VRAM tracking)
     # ----------------------------------------------------------------
     echo "--- CPU ---"
     for LT in verlet edge; do
@@ -149,11 +189,11 @@ for SIZE in ${SIZES}; do
         OUT="${RESULTS}/${SIZE}_cpu_${LT}.log"
         make_input "${INP}" "backend = CPU
 list_type = ${LT}" "${TOP}" "${CONF}" "${TMPD}"
-        run_case "${SIZE}_cpu_${LT}" "${INP}" "${OUT}" "${TMPD}"
+        run_case "${SIZE}_cpu_${LT}" "${INP}" "${OUT}" "${TMPD}" 0
     done
 
     # ----------------------------------------------------------------
-    # GPU benchmarks
+    # GPU benchmarks (with VRAM tracking)
     # ----------------------------------------------------------------
     if [ "${GPU_AVAILABLE}" -eq 1 ]; then
         echo "--- GPU ---"
@@ -166,7 +206,7 @@ list_type = ${LT}" "${TOP}" "${CONF}" "${TMPD}"
 backend_precision = mixed
 CUDA_list = verlet
 use_edge = 0" "${TOP}" "${CONF}" "${TMPD}"
-        run_case "${SIZE}_gpu_verlet" "${INP}" "${OUT}" "${TMPD}"
+        run_case "${SIZE}_gpu_verlet" "${INP}" "${OUT}" "${TMPD}" 1
 
         # verlet + use_edge (existing compressed approach)
         TMPD="${RESULTS}/tmp_${SIZE}_gpu_verlet_edge"
@@ -177,7 +217,7 @@ backend_precision = mixed
 CUDA_list = verlet
 use_edge = 1
 edge_n_forces = 1" "${TOP}" "${CONF}" "${TMPD}"
-        run_case "${SIZE}_gpu_verlet_edge" "${INP}" "${OUT}" "${TMPD}"
+        run_case "${SIZE}_gpu_verlet_edge" "${INP}" "${OUT}" "${TMPD}" 1
 
         # new CUDAEdgeList (direct two-pass build)
         TMPD="${RESULTS}/tmp_${SIZE}_gpu_edge"
@@ -188,7 +228,7 @@ backend_precision = mixed
 CUDA_list = edge
 use_edge = 1
 edge_n_forces = 1" "${TOP}" "${CONF}" "${TMPD}"
-        run_case "${SIZE}_gpu_edge" "${INP}" "${OUT}" "${TMPD}"
+        run_case "${SIZE}_gpu_edge" "${INP}" "${OUT}" "${TMPD}" 1
     else
         echo "--- GPU not available ---"
     fi
