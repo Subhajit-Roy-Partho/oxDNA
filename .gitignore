@@ -92,4 +92,5 @@ src/oxpy/_version.py
 
 # Encoder/Decoder 
 utils/PostSimulationCompression/encode_trj
-utils/PostSimulationCompression/decode_trj
+utils/PostSimulationCompression/decode_trjbenchmarks/results/
+benchmarks/oxDNA_performance/
