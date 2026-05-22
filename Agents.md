@@ -142,30 +142,62 @@ Benchmarks use DNA2 systems from [ErikPoppleton/oxDNA_performance](https://githu
 System sizes: N=128, N=512, N=4096, N=32768 nucleotides  
 Simulation: 10M MD steps, DNA2 interaction, T=20°C, salt=1.0M
 
-All benchmarks use DNA2 interaction, 20°C, 1.0 M salt, 50,000 MD steps.
+All benchmarks: DNA2, 20°C, 1.0 M salt, 50,000 MD steps, NVIDIA RTX A6000.
 
-### N64 (1024 nucleotides, 128 strands)
+### GPU benchmarks
 
-| Backend | List type | SimBackend (s) | Steps/s | Forces (s) | Lists (s) |
-|---------|-----------|----------------|---------|------------|-----------|
-| CPU     | verlet    | 79.3           | 630     | -          | -         |
-| CPU     | edge      | 79.3           | 631     | -          | -         |
-| GPU     | verlet    | 6.18           | 8,085   | 4.39 (71%) | 0.12 (2%) |
-| GPU     | verlet+use_edge | 3.27     | 15,295  | 1.46 (45%) | 0.13 (4%) |
-| GPU     | edge (new) | 3.30          | 15,175  | 1.46 (44%) | 0.13 (4%) |
+| System | list_type | Steps/s | vs plain verlet |
+|--------|-----------|---------|-----------------|
+| N64 (1K nt) | verlet | 8,085 | baseline |
+| N64 | verlet+use_edge | 15,295 | +89% |
+| N64 | **edge (new)** | **15,175** | **+88%** |
+| N512 (8K nt) | verlet | 7,381 | baseline |
+| N512 | verlet+use_edge | 14,160 | +92% |
+| N512 | **edge (new)** | **14,100** | **+91%** |
+| N4096 (65K nt) | verlet | 3,374 | baseline |
+| N4096 | verlet+use_edge | 5,232 | +55% |
+| N4096 | **edge (new)** | **5,282** | **+57%** |
 
-**GPU speedup**: edge list gives **~89% speedup** over plain Verlet.  
-**Force reduction**: 4.39s → 1.46s (3× faster forces via Newton's 3rd law + better memory access).  
-**New CUDAEdgeList**: matches `verlet+use_edge` performance with ~½ the neighbour-matrix memory.  
-**CPU**: No MD throughput difference (MD backend iterates per-particle; edge benefit shows in `get_potential_interactions()` callers).
+**New `CUDAEdgeList` is within 1% of the existing `verlet+use_edge` approach** across all sizes,
+while eliminating the `d_matrix_neighs` allocation (~N × max_neigh × 4 bytes).  
+For N4096, `CUDAEdgeList` is marginally *faster* (+0.96%) due to the lack of the matrix alloc.
 
-### N512 and N4096
+### N64 timing breakdown (GPU)
 
-See `benchmarks/results/summary.csv` for results after the benchmark run completes.
+| Timer | verlet | verlet+use_edge | edge (new) |
+|-------|--------|-----------------|------------|
+| SimBackend total | 6.18s | 3.27s | 3.30s |
+| Forces | 4.39s (71%) | 1.46s (45%) | 1.46s (44%) |
+| Lists | 0.12s (2%) | 0.13s (4%) | 0.13s (4%) |
+
+**Force calculation is 3× faster** with edge list due to Newton's 3rd law and improved
+coalesced memory access (edge list is compact vs strided neighbour matrix).
+
+### CPU benchmarks
+
+| System | list_type | Steps/s |
+|--------|-----------|---------|
+| N64 (1K nt) | verlet | 630 |
+| N64 | edge | 631 |
+| N512 (8K nt) | verlet | 79 |
+| N512 | edge | 79 |
+| N4096 (65K nt) | verlet | 9 |
+| N4096 | edge | 9 |
+
+CPU throughput is identical: the MD backend iterates with `get_neigh_list(p)` per particle,
+not `get_potential_interactions()`. The CPU `EdgeList` benefit shows for callers of
+`get_potential_interactions()` (e.g., DPD thermostat) which now returns the pre-built
+flat vector in O(1) instead of O(N × avg_neigh).
+
+### Scaling
+
+CPU scales linearly: 1K→8K (8×) → 8× slower (630→79). N=O(N) with Verlet list.  
+GPU efficiency drops with size: 1K→65K (64×) → only 2.4× slower with edge list (peak GPU
+occupancy for large N offsets the reduced cache efficiency).
 
 ### Raw data
 
-See `benchmarks/results/` for per-run log files with full timing breakdowns.
+See `benchmarks/results/` for per-run log files and `benchmarks/results/summary.csv`.
 
 ---
 
