@@ -203,10 +203,25 @@ See `benchmarks/results/` for per-run log files and `benchmarks/results/summary.
 
 ---
 
+## Energy Verification
+
+CPU `EdgeList` energies were verified against `VerletList` on the N64 DNA2 system. Both produce
+identical potential energy per nucleotide at every step (bit-for-bit match confirmed by `diff`).
+
+Root cause of an earlier energy bug and its fix:
+
+- **Bug**: `EdgeList` originally overrode `get_potential_interactions()` and returned `_edges` — a
+  flat non-bonded-only vector built from `Cells::get_neigh_list()`. Bonded interactions (backbone,
+  stacking) were missing because `Cells` excludes bonded neighbours via `!p->is_bonded(q)`.
+- **Fix**: Removed the override. `BaseList::get_potential_interactions()` is now used, which calls
+  `get_all_neighbours(p)` and correctly includes both bonded and non-bonded pairs.
+- The `_edges` member was also removed as it became dead code after the override was dropped.
+
+---
+
 ## Known Limitations
 
 1. **CPU EdgeList + MC**: `get_neigh_list()` returns per-particle half-lists (compatible with MC).
-   `get_potential_interactions()` returns the pre-built flat edge vector.
+   `get_potential_interactions()` is inherited from `BaseList` and includes bonded pairs.
 2. **GPU CUDAEdgeList + double precision**: Not supported (same constraint as `use_edge = true`).
 3. **GPU CUDAEdgeList + barostat**: Not supported (same constraint as `use_edge = true`).
-4. The edge list grows dynamically if the initial capacity estimate is exceeded (10% headroom added on resize).

@@ -1,10 +1,9 @@
 /*
  * EdgeList.cpp
  *
- * Flat edge-list implementation. Maintains a contiguous std::vector<ParticlePair>
- * of all unique interactions and per-particle half-lists for MC compatibility.
- * Uses a Verlet skin so cells are only consulted when particles have displaced
- * by more than _skin since the last update.
+ * Flat edge-list implementation. Maintains per-particle half-lists for MC
+ * compatibility. Uses a Verlet skin so cells are only consulted when particles
+ * have displaced by more than _skin since the last update.
  */
 
 #include "EdgeList.h"
@@ -59,20 +58,14 @@ void EdgeList::single_update(BaseParticle *p) {
 }
 
 void EdgeList::_rebuild_lists() {
-    // clear per-particle half-lists and flat edge array
     for(auto &nl : _neigh_lists) nl.clear();
-    _edges.clear();
 
     for(uint i = 0; i < _particles.size(); i++) {
         BaseParticle *p = _particles[i];
-        // cells give us half-list (j < i) for each particle
-        auto cell_neigh = _cells.get_neigh_list(p);
-        _neigh_lists[p->index] = cell_neigh;
-        for(auto q : cell_neigh) {
-            _edges.emplace_back(p, q);  // p->index > q->index guaranteed by cells half-list
-        }
+        _neigh_lists[p->index] = _cells.get_neigh_list(p);
         _list_poss[p->index] = p->pos;
     }
+
     _updated = true;
 }
 
@@ -89,10 +82,6 @@ std::vector<BaseParticle *> EdgeList::get_neigh_list(BaseParticle *p) {
 
 std::vector<BaseParticle *> EdgeList::get_complete_neigh_list(BaseParticle *p) {
     return _cells.get_complete_neigh_list(p);
-}
-
-std::vector<ParticlePair> EdgeList::get_potential_interactions() {
-    return _edges;
 }
 
 void EdgeList::change_box() {
