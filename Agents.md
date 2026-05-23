@@ -146,43 +146,45 @@ All benchmarks: DNA2, 20°C, 1.0 M salt, 50,000 MD steps, NVIDIA RTX A6000.
 
 ### GPU benchmarks
 
-| System | list_type | Steps/s | vs plain verlet |
-|--------|-----------|---------|-----------------|
-| N64 (1K nt) | verlet | 8,085 | baseline |
-| N64 | verlet+use_edge | 15,295 | +89% |
-| N64 | **edge (new)** | **15,175** | **+88%** |
-| N512 (8K nt) | verlet | 7,381 | baseline |
-| N512 | verlet+use_edge | 14,160 | +92% |
-| N512 | **edge (new)** | **14,100** | **+91%** |
-| N4096 (65K nt) | verlet | 3,374 | baseline |
-| N4096 | verlet+use_edge | 5,232 | +55% |
-| N4096 | **edge (new)** | **5,282** | **+57%** |
+| System | list_type | Steps/s | vs plain verlet | VRAM (MB) |
+|--------|-----------|---------|-----------------|-----------|
+| N64 (1K nt) | verlet | 8,565 | baseline | 275 |
+| N64 | verlet+use_edge | 15,542 | +81% | 277 |
+| N64 | **edge (new)** | **15,347** | **+79%** | **275** |
+| N512 (8K nt) | verlet | 7,379 | baseline | 295 |
+| N512 | verlet+use_edge | 13,572 | +84% | 317 |
+| N512 | **edge (new)** | **13,554** | **+84%** | **295** |
+| N4096 (65K nt) | verlet | 3,353 | baseline | 437 |
+| N4096 | verlet+use_edge | 5,225 | +56% | 627 |
+| N4096 | **edge (new)** | **5,294** | **+58%** | **439** |
 
 **New `CUDAEdgeList` is within 1% of the existing `verlet+use_edge` approach** across all sizes,
-while eliminating the `d_matrix_neighs` allocation (~N × max_neigh × 4 bytes).  
-For N4096, `CUDAEdgeList` is marginally *faster* (+0.96%) due to the lack of the matrix alloc.
+while using dramatically less VRAM at larger system sizes.
+
+Key VRAM finding: `verlet+use_edge` retains the full `d_matrix_neighs` *and* allocates `d_edge_list`,
+so its VRAM grows with both. `CUDAEdgeList` skips the matrix entirely — at N4096 it uses
+**188 MB less VRAM** (439 MB vs 627 MB) while being marginally *faster* (+58% vs +56%).
 
 ### N64 timing breakdown (GPU)
 
 | Timer | verlet | verlet+use_edge | edge (new) |
 |-------|--------|-----------------|------------|
-| SimBackend total | 6.18s | 3.27s | 3.30s |
-| Forces | 4.39s (71%) | 1.46s (45%) | 1.46s (44%) |
-| Lists | 0.12s (2%) | 0.13s (4%) | 0.13s (4%) |
+| SimBackend total | 5.84s | 3.22s | 3.26s |
+| VRAM | 275 MB | 277 MB | 275 MB |
 
 **Force calculation is 3× faster** with edge list due to Newton's 3rd law and improved
 coalesced memory access (edge list is compact vs strided neighbour matrix).
 
 ### CPU benchmarks
 
-| System | list_type | Steps/s |
-|--------|-----------|---------|
-| N64 (1K nt) | verlet | 630 |
-| N64 | edge | 631 |
-| N512 (8K nt) | verlet | 79 |
-| N512 | edge | 79 |
-| N4096 (65K nt) | verlet | 9 |
-| N4096 | edge | 9 |
+| System | list_type | Steps/s | VRAM (MB) |
+|--------|-----------|---------|-----------|
+| N64 (1K nt) | verlet | 633 | N/A |
+| N64 | edge | 629 | N/A |
+| N512 (8K nt) | verlet | 79 | N/A |
+| N512 | edge | 79 | N/A |
+| N4096 (65K nt) | verlet | 8 | N/A |
+| N4096 | edge | 9 | N/A |
 
 CPU throughput is identical: the MD backend iterates with `get_neigh_list(p)` per particle,
 not `get_potential_interactions()`. The CPU `EdgeList` benefit shows for callers of
