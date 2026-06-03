@@ -8,13 +8,15 @@ IF(Python)
 	# Without this check, find_package may silently find a different Python installation
 	# that meets the version requirement, causing oxpy to be installed for a Python
 	# interpreter other than the one the user expects.
-	find_program(DEFAULT_PYTHON NAMES python3 python)
+	find_program(DEFAULT_PYTHON NAMES python python3)
 	if(NOT DEFAULT_PYTHON)
 		message(FATAL_ERROR "No python3 or python executable found in PATH.")
 	endif()
 
 	# Pin find_package to the user's default Python, preventing it from picking a different one.
+	# PyBind11 uses a different capitalization when searching.  Ensure both find the same interpreter.
 	set(Python_EXECUTABLE "${DEFAULT_PYTHON}" CACHE FILEPATH "Path to Python interpreter" FORCE)
+	set(PYTHON_EXECUTABLE "${DEFAULT_PYTHON}" CACHE FILEPATH "Path to Python interpreter" FORCE)
 
 	if(OxpyVersionOverride)
 		message(STATUS "OxpyVersionOverride is ON: skipping Python version check, using ${DEFAULT_PYTHON}")
@@ -55,7 +57,11 @@ IF(Python)
 	# we need the oxDNA "common" library to be compiled so that the resulting code is position-independent and the library can be linked dynamically
 	set_target_properties(oxdna_common PROPERTIES POSITION_INDEPENDENT_CODE ON)
 	
-	Python_add_library(core MODULE bindings.cpp ${oxpy_SOURCES} WITH_SOABI)
+	if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.17")
+		Python_add_library(core MODULE bindings.cpp ${oxpy_SOURCES} WITH_SOABI)
+	else()
+		Python_add_library(core MODULE bindings.cpp ${oxpy_SOURCES})
+	endif()
 	set_target_properties(core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 	target_include_directories(core PRIVATE ${Python_INCLUDE_DIRS})
 	# On MacOS, Python extensions should NOT link against libpython
@@ -106,10 +112,22 @@ IF(Python)
 		# Install the package using pip
 		if(OxpySystemInstall)
 			install(CODE "message(STATUS \"Installing oxpy system-wide via pip...\")
-						execute_process(COMMAND ${Python_EXECUTABLE} -m pip install ${OXPY_BASE_DIR})")
+						execute_process(
+							COMMAND \"${Python_EXECUTABLE}\" -m pip install \"${OXPY_BASE_DIR}\"
+							RESULT_VARIABLE oxpy_install_result
+						)
+						if(NOT oxpy_install_result EQUAL 0)
+							message(FATAL_ERROR \"oxpy installation failed\")
+						endif()")
 		else()
 			install(CODE "message(STATUS \"Installing oxpy for current user via pip...\")
-						execute_process(COMMAND ${Python_EXECUTABLE} -m pip install --user ${OXPY_BASE_DIR})")
+						execute_process(
+							COMMAND \"${Python_EXECUTABLE}\" -m pip install --user \"${OXPY_BASE_DIR}\"
+							RESULT_VARIABLE oxpy_install_result
+						)
+						if(NOT oxpy_install_result EQUAL 0)
+							message(FATAL_ERROR \"oxpy installation failed\")
+						endif()")
 		endif()
 	endif()
 	

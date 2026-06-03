@@ -2,23 +2,16 @@
  * @file    SimBackend.h
  * @date    03/set/2010
  * @author  lorenzo
- *
- *
  */
 
 #ifndef SIMBACKEND_H_
 #define SIMBACKEND_H_
 
-#define SIM_MD 0
-#define SIM_MC 1
-
 #include "../defs.h"
 #include "../Observables/ObservableOutput.h"
 #include "../Particles/Molecule.h"
 
-#include <cmath>
-#include <fstream>
-#include <cfloat>
+#include <iosfwd>
 #include <vector>
 #include <map>
 
@@ -209,6 +202,10 @@ public:
 
 	virtual void update_observables_data(bool force=false);
 
+	/**
+	 * @brief Returns the name of the file where the error configuration was printed
+	 */
+	virtual std::string print_error_conf();
 	virtual void print_conf(bool reduced=false, bool only_last=false);
 
 	/**

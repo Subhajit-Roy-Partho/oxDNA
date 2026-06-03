@@ -5,9 +5,6 @@
  *      Author: lorenzo
  */
 
-#include <sstream>
-#include <fstream>
-
 #ifdef ZSTD_ENABLED
 #include <ztdpp/zstdpp.hpp>
 #endif
@@ -23,6 +20,9 @@
 #include "../PluginManagement/PluginManager.h"
 #include "../Particles/BaseParticle.h"
 #include "../Utilities/Timings.h"
+
+#include <sstream>
+#include <fstream>
 
 SimBackend::SimBackend() {
 	// we need to initialize everything so that we can check what we can
@@ -879,6 +879,17 @@ void SimBackend::fix_diffusion() {
 	}
 
 	apply_changes_to_simulation_data();
+}
+
+std::string SimBackend::print_error_conf() {
+	std::string error_conf_file = "error_conf.dat";
+	std::string init_string = Utils::sformat("{\n\tname = %s\n\tprint_every = 0\n\tonly_last = 1\n}\n", error_conf_file.c_str());
+	ObservableOutputPtr obs_output_error_conf = std::make_shared<ObservableOutput>(init_string);
+	obs_output_error_conf->add_observable("type = configuration");
+	obs_output_error_conf->init();
+	obs_output_error_conf->print_output(current_step());
+
+	return error_conf_file;
 }
 
 void SimBackend::print_conf(bool reduced, bool only_last) {
