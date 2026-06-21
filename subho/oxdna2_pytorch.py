@@ -24,6 +24,12 @@ import numpy as np
 import math
 from pathlib import Path
 
+try:
+    from torch_cluster import radius_graph as _radius_graph
+    _TORCH_CLUSTER_AVAILABLE = True
+except ImportError:
+    _TORCH_CLUSTER_AVAILABLE = False
+
 # Define constants (from src/model.h)
 PI = math.pi
 
@@ -225,6 +231,27 @@ class oxDNA2Energy(nn.Module):
 
         self.dh_B = -(math.exp(-x / l) * q * q * (x + l) * (x + l)) / (-4.0 * x * x * x * l * l * q)
         self.dh_RC = x * (q * x + 3.0 * q * l) / (q * (x + l))
+
+        # Global COM-to-COM cutoff for radius_graph neighbor list.
+        # Each energy function checks site-to-site distances; to guarantee no
+        # pair is missed we add the maximum possible site offset from COM on
+        # each side.  The backbone site has the largest offset:
+        #   grooving  -> sqrt(POS_MM_BACK1^2 + POS_MM_BACK2^2)
+        #   otherwise -> |POS_BACK|
+        # DH is always the longest-ranged non-bonded term and dominates.
+        if self.grooving:
+            _back_offset = math.sqrt(POS_MM_BACK1 ** 2 + POS_MM_BACK2 ** 2)
+        else:
+            _back_offset = abs(POS_BACK)
+        _max_site_offset = max(_back_offset, abs(POS_BASE), abs(POS_STACK))
+        _nonbonded_site_cutoffs = [
+            EXCL_RC1, EXCL_RC2, EXCL_RC3, EXCL_RC4,  # excluded volume
+            HYDR_RCHIGH,                               # hydrogen bonding
+            CRST_RCHIGH,                               # cross-stacking
+            CXST_RCHIGH,                               # coaxial stacking
+            self.dh_RC,                                # Debye-Hückel (longest-ranged)
+        ]
+        self._r_cut = max(_nonbonded_site_cutoffs) + 2.0 * _max_site_offset
 
     @staticmethod
     def _base_letter_to_index(base_letter):
@@ -1124,44 +1151,43 @@ class oxDNA2Energy(nn.Module):
             # Compute angles
             cost1 = -torch.sum(a1[in_range] * b1[in_range], dim=1)
             cost4 = torch.sum(a3[in_range] * b3[in_range], dim=1)
-            cost5 = torch.sum(a3[in_range] * r_stackdir[in_range].squeeze(1), dim=1)
-            cost6 = -torch.sum(b3[in_range] * r_stackdir[in_range].squeeze(1), dim=1)
+            cost5 = torch.sum(a3[in_range] * r_stackdir[in_range], dim=1)
+            cost6 = -torch.sum(b3[in_range] * r_stackdir[in_range], dim=1)
 
             # Radial part
             f2 = self._f2(r_stackmod[in_range].squeeze(1), CXST_K_OXDNA2, CXST_R0, CXST_RC,
                          CXST_RLOW, CXST_RHIGH, CXST_RCLOW, CXST_RCHIGH,
                          CXST_BLOW, CXST_BHIGH)
 
-            # Angular parts with special handling for theta1 (oxDNA2 has additional harmonic term)
-            theta1 = torch.acos(torch.clamp(cost1, -1, 1))
-            t_sb = CXST_THETA1_SB
+            # theta1: DNA2 uses f4(θ) + pure-harmonic(θ); SA/SB define the harmonic tail.
+            theta1 = torch.acos(torch.clamp(cost1, -1.0, 1.0))
             f4_t1 = self._f4(theta1, CXST_THETA1_A, CXST_THETA1_B, CXST_THETA1_T0_OXDNA2,
                             CXST_THETA1_TS, CXST_THETA1_TC)
-            # Add harmonic part for oxDNA2
-            t_minus_sb = theta1 - t_sb
-            harmonic_part = torch.where(t_minus_sb > 0, CXST_THETA1_SA * t_minus_sb**2,
-                                       torch.zeros_like(t_minus_sb))
-            f4_t1 = f4_t1 + harmonic_part
+            t_minus_sb = theta1 - CXST_THETA1_SB
+            f4_t1 = f4_t1 + torch.where(t_minus_sb > 0,
+                                         CXST_THETA1_SA * t_minus_sb ** 2,
+                                         torch.zeros_like(t_minus_sb))
 
-            f4_t4 = self._f4(torch.acos(torch.clamp(cost4, -1, 1)),
+            f4_t4 = self._f4(torch.acos(torch.clamp(cost4, -1.0, 1.0)),
                             CXST_THETA4_A, CXST_THETA4_B, CXST_THETA4_T0,
                             CXST_THETA4_TS, CXST_THETA4_TC)
 
-            # Same cosine-space symmetry as oxDNA's _custom_f4(cost) + _custom_f4(-cost).
-            f4_t5 = self._f4(torch.acos(torch.clamp(cost5, -1, 1)),
+            # t5, t6: symmetrised f4(cost) + f4(-cost)
+            f4_t5 = self._f4(torch.acos(torch.clamp(cost5, -1.0, 1.0)),
                             CXST_THETA5_A, CXST_THETA5_B, CXST_THETA5_T0,
                             CXST_THETA5_TS, CXST_THETA5_TC) + \
-                    self._f4(torch.acos(torch.clamp(-cost5, -1, 1)),
+                    self._f4(torch.acos(torch.clamp(-cost5, -1.0, 1.0)),
                             CXST_THETA5_A, CXST_THETA5_B, CXST_THETA5_T0,
                             CXST_THETA5_TS, CXST_THETA5_TC)
 
-            f4_t6 = self._f4(torch.acos(torch.clamp(cost6, -1, 1)),
+            f4_t6 = self._f4(torch.acos(torch.clamp(cost6, -1.0, 1.0)),
                             CXST_THETA5_A, CXST_THETA5_B, CXST_THETA5_T0,
                             CXST_THETA5_TS, CXST_THETA5_TC) + \
-                    self._f4(torch.acos(torch.clamp(-cost6, -1, 1)),
+                    self._f4(torch.acos(torch.clamp(-cost6, -1.0, 1.0)),
                             CXST_THETA5_A, CXST_THETA5_B, CXST_THETA5_T0,
                             CXST_THETA5_TS, CXST_THETA5_TC)
 
+            # DNA2 coaxial stacking has no phi dihedral term (unlike oxDNA1).
             energy[in_range] = f2 * f4_t1 * f4_t4 * f4_t5 * f4_t6
 
         return energy
@@ -1262,7 +1288,19 @@ class oxDNA2Energy(nn.Module):
         n5_neighbors = n5_neighbors.long()
 
         n_particles = positions.shape[0]
-        pair_indices = torch.triu_indices(n_particles, n_particles, offset=1, device=device)
+        if _TORCH_CLUSTER_AVAILABLE:
+            # Build a sparse neighbor list: only COM pairs within _r_cut are
+            # returned, reducing work from O(N²) to O(N * avg_neighbors).
+            # radius_graph returns directed edges; we keep only i < j so the
+            # pair list matches the triu_indices convention used below.
+            edge_index = _radius_graph(
+                positions, r=self._r_cut, loop=False,
+                max_num_neighbors=n_particles,
+            )
+            keep = edge_index[0] < edge_index[1]
+            pair_indices = edge_index[:, keep]
+        else:
+            pair_indices = torch.triu_indices(n_particles, n_particles, offset=1, device=device)
         i_idx = pair_indices[0]
         j_idx = pair_indices[1]
         n_pairs = i_idx.shape[0]
