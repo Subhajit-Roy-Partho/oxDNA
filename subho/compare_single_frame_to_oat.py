@@ -206,7 +206,12 @@ def resolve_output_bonds_runner(oat_bin: str):
     """
     oat_resolved = shutil.which(oat_bin)
     if oat_resolved is not None:
-        return [oat_resolved, "output_bonds"], None, f"oat:{oat_resolved}"
+        runner_env = os.environ.copy()
+        compat = str(Path(__file__).resolve().parent / "compat")
+        runner_env["PYTHONPATH"] = compat + (
+            f":{runner_env['PYTHONPATH']}" if runner_env.get("PYTHONPATH") else ""
+        )
+        return [oat_resolved, "output_bonds"], runner_env, f"oat:{oat_resolved}"
     explicit_oat = Path(oat_bin)
     if explicit_oat.exists():
         return [str(explicit_oat.resolve()), "output_bonds"], None, f"oat:{explicit_oat.resolve()}"
@@ -248,6 +253,23 @@ def run_output_bonds(oat_bin: str, input_path: Path, frame_path: Path, output_pr
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, env=runner_env)
     except subprocess.CalledProcessError as exc:
+        # OAT releases differ on whether output_bonds exposes the historical
+        # quiet flag. Retry without it only for the parser's explicit unknown
+        # argument error; all simulation/analysis failures still fail closed.
+        if "unrecognized arguments: -q" in (exc.stderr or ""):
+            compatibility_cmd = cmd[:-1]
+            try:
+                subprocess.run(
+                    compatibility_cmd,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=runner_env,
+                )
+                return f"{runner_desc} (without unsupported -q)"
+            except subprocess.CalledProcessError as compatibility_exc:
+                exc = compatibility_exc
+                cmd = compatibility_cmd
         raise RuntimeError(
             "output_bonds runner failed.\n"
             f"Command: {' '.join(cmd)}\n"
@@ -263,7 +285,17 @@ def load_oat_reference(output_prefix: Path) -> Dict[str, np.ndarray]:
     for term in TERM_ORDER:
         json_path = output_prefix.with_name(f"{output_prefix.name}_{term}.json")
         if not json_path.exists():
-            raise FileNotFoundError(f"Expected oat output file not found: {json_path}")
+            legacy_total = output_prefix if output_prefix.exists() else None
+            detail = (
+                f" The runner produced only the legacy total overlay {legacy_total};"
+                " that format cannot validate individual oxDNA2 terms."
+                if legacy_total is not None
+                else ""
+            )
+            raise RuntimeError(
+                f"Expected component output not found: {json_path}.{detail} "
+                "Use an oxDNA/OAT build with the pair_energy component patch."
+            )
         with json_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
         key = next(iter(data.keys()))
@@ -379,16 +411,31 @@ def main() -> None:
     try:
         input_path = tmpdir / "input_single_frame_dna2"
         output_prefix = tmpdir / "oat_ref"
+        # Some OAT releases incorrectly reinterpret absolute paths from the
+        # input file as relative to that input file. Keep self-contained local
+        # copies so both old and new parsers resolve identical inputs.
+        local_top = tmpdir / top_path.name
+        local_frame = tmpdir / frame_path.name
+        shutil.copy2(top_path, local_top)
+        shutil.copy2(frame_path, local_frame)
+        local_seq_dep = None
+        if seq_dep_file is not None:
+            local_seq_dep = tmpdir / seq_dep_file.name
+            shutil.copy2(seq_dep_file, local_seq_dep)
         write_single_frame_input(
             input_path=input_path,
-            top_path=top_path,
-            frame_path=frame_path,
+            # OAT 1.0.18 concatenates input_dir + configured path without
+            # inserting a separator, hence the explicit leading slash here.
+            top_path=f"/{local_top.name}",
+            frame_path=f"/{local_frame.name}",
             temperature_token=args.temperature,
             salt_concentration=args.salt,
             use_average_seq=args.use_average_seq,
-            seq_dep_file=seq_dep_file,
+            # The oxDNA engine resolves this path itself and accepts absolute
+            # paths correctly (unlike the legacy topology reader above).
+            seq_dep_file=local_seq_dep,
         )
-        runner_desc = run_output_bonds(args.oat_bin, input_path, frame_path, output_prefix)
+        runner_desc = run_output_bonds(args.oat_bin, input_path, local_frame, output_prefix)
         oat_reference = load_oat_reference(output_prefix)
 
         torch_split_terms = {
