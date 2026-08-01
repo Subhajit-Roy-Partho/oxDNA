@@ -40,6 +40,8 @@ std::string PairEnergy::get_output_string(llint curr_step) {
 	number total_energy_diff = 0.;
 	std::map<int, number> split_energies = _config_info->interaction->get_system_energy_split(_config_info->particles(), _config_info->lists);
 
+	// Preserve DOUBLE-build precision for downstream per-component audits.
+	output_str.precision(17);
 	if(_print_header) {
 		if((int) split_energies.size() == 7) output_str << "#id1 id2 FENE BEXC STCK NEXC HB CRSTCK CXSTCK total, t = " << curr_step << "\n";
 		else output_str << "#id1 id2 FENE BEXC STCK NEXC HB CRSTCK CXSTCK DH total, t = " << curr_step << "\n";
@@ -59,6 +61,7 @@ std::string PairEnergy::get_output_string(llint curr_step) {
 			number pair_interaction = 0.;
 			bool interaction_exists = false;
 			std::stringstream pair_string;
+			pair_string.precision(17);
 			pair_string << p->index << " " << q->index;
 
 			typename std::map<int, number>::iterator it = split_energies.begin();
@@ -88,6 +91,7 @@ std::string PairEnergy::get_output_string(llint curr_step) {
 
 		number pair_interaction = 0.;
 		std::stringstream pair_string;
+		pair_string.precision(17);
 		pair_string << p->index << " " << q->index;
 
 		for(int k = 0; k < (int) split_energies.size(); k++) {
