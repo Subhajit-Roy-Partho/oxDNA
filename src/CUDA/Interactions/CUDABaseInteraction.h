@@ -31,6 +31,7 @@ protected:
 
 	bool _update_st = false;
 	bool _update_particle_st = false;
+	bool _st_no_kinetic_part = false;
 	CUDAStressTensor *_d_st = nullptr, *_h_st = nullptr;
 
 	int _N = -1;

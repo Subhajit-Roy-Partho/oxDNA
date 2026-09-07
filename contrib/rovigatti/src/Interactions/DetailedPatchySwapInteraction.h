@@ -18,6 +18,13 @@
  * interaction_type = DetailedPatchySwapInteraction
  */
 class DetailedPatchySwapInteraction: public BaseInteraction {
+public:
+	enum StressTensorMode {
+		ST_ALL = 0,
+		ST_PATCHY = 1,
+		ST_SPHERICAL = 2,
+		ST_THREE_BODY = 3
+	};
 protected:
 	bool _normalise_patches = true;
 	/// Number of particles of each species
@@ -68,6 +75,8 @@ protected:
 	number _spherical_rcut = 2.5;
 	number _sqr_spherical_rcut = 6.25;
 	number _spherical_E_cut = 0.;
+
+	StressTensorMode _stress_tensor_mode = ST_ALL;
 
 	void _parse_interaction_matrix();
 	std::vector<LR_vector> _parse_base_patches(std::string filename, int N_patches);

@@ -77,7 +77,8 @@ These options control the behaviour of MD simulations.
 * `dt`: the simulation time step. The higher this value, the longer time a simulation of a given number of time steps will correspond to. However, a value that is too large will result in numerical instabilities. Typical values range between 0.001 and 0.005.
 * `refresh_vel = <bool>`: if `true` the velocities of the particles in the initial configuration will be randomly sampled from a Boltzmann distribution corresponding to `T`. If `false`, the velocities in the `conf_file` will be used (or an error will be thrown if the `conf_file` doesn't include initialized velocities).
 * `[reset_initial_com_momentum = <bool>]`: if `true` the momentum of the centre of mass of the initial configuration will be set to 0. Defaults to `false` to enforce the reproducibility of the trajectory.
-* `[reset_com_momentum = <bool>]`: if `true` the momentum of the centre of mass will be set to 0 each time fix_diffusion is performed. Defaults to `false` to enforce the reproducibility of the trajectory
+* `[reset_com_momentum = <bool>]`: if `true` the momentum of the centre of mass will be set to 0 each time `fix_diffusion` is performed. Defaults to `false` to enforce the reproducibility of the trajectory.
+* `[stress_tensor_no_kinetic_part = <bool>]`. The kinetic contribution will not be included in the stress tensor, which is used by observables such as `pressure` or `stress_autocorrelation`. Defaults to `false`.
 
 ### Constant-temperature simulations
 

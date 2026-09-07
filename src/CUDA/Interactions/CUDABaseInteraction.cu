@@ -95,6 +95,9 @@ void CUDABaseInteraction::get_cuda_settings(input_file &inp) {
 			throw oxDNAException("edge_n_forces must be > 0");
 		}
 	}
+
+	// note that the same key is read independently by BaseInteraction
+	getInputBool(&inp, "stress_tensor_no_kinetic_part", &_st_no_kinetic_part, 0);
 }
 
 void CUDABaseInteraction::cuda_init(int N) {
@@ -135,8 +138,10 @@ StressTensor CUDABaseInteraction::CPU_stress_tensor(c_number4 *vels) {
 	thrust::device_ptr<CUDAStressTensor> t_st = thrust::device_pointer_cast(_d_st);
 	CUDAStressTensor st_sum = thrust::reduce(t_st, t_st + _N, CUDAStressTensor());
 
-	thrust::device_ptr<c_number4> t_vels = thrust::device_pointer_cast(vels);
-	st_sum += thrust::transform_reduce(t_vels, t_vels + _N, vel_to_st(), CUDAStressTensor(), thrust::plus<CUDAStressTensor>());
+	if(!_st_no_kinetic_part) {
+		thrust::device_ptr<c_number4> t_vels = thrust::device_pointer_cast(vels);
+		st_sum += thrust::transform_reduce(t_vels, t_vels + _N, vel_to_st(), CUDAStressTensor(), thrust::plus<CUDAStressTensor>());
+	}
 
 	return st_sum.as_StressTensor();
 }
@@ -153,14 +158,26 @@ std::vector<StressTensor> CUDABaseInteraction::CPU_particle_stress_tensors(c_num
 
 	std::vector<StressTensor> particle_stress_tensors(_N);
 	for(int i = 0; i < _N; i++) {
-		particle_stress_tensors[i] = StressTensor({
-			h_st[i].e[0] + SQR(h_vels[i].x),
-			h_st[i].e[1] + SQR(h_vels[i].y),
-			h_st[i].e[2] + SQR(h_vels[i].z),
-			h_st[i].e[3] + h_vels[i].x * h_vels[i].y,
-			h_st[i].e[4] + h_vels[i].x * h_vels[i].z,
-			h_st[i].e[5] + h_vels[i].y * h_vels[i].z
-		});
+		if(_st_no_kinetic_part) {
+			particle_stress_tensors[i] = StressTensor({
+				h_st[i].e[0],
+				h_st[i].e[1],
+				h_st[i].e[2],
+				h_st[i].e[3],
+				h_st[i].e[4],
+				h_st[i].e[5]
+			});
+		}
+		else {
+			particle_stress_tensors[i] = StressTensor({
+				h_st[i].e[0] + SQR(h_vels[i].x),
+				h_st[i].e[1] + SQR(h_vels[i].y),
+				h_st[i].e[2] + SQR(h_vels[i].z),
+				h_st[i].e[3] + h_vels[i].x * h_vels[i].y,
+				h_st[i].e[4] + h_vels[i].x * h_vels[i].z,
+				h_st[i].e[5] + h_vels[i].y * h_vels[i].z
+			});
+		}
 	}
 
 	return particle_stress_tensors;

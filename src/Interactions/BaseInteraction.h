@@ -48,6 +48,7 @@ protected:
 
 	std::vector<StressTensor> _particle_stress_tensors;
 	StressTensor _stress_tensor;
+	bool _stress_tensor_no_kinetic_part = false;
 	bool _has_particle_stress_tensors;
 	bool _has_stress_tensor;
 	/// Step at which the stress tensor was last updated. -1 means never updated.

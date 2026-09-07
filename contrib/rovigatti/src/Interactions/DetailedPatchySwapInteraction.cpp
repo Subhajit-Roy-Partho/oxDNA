@@ -48,6 +48,27 @@ void DetailedPatchySwapInteraction::get_settings(input_file &inp) {
 	if(_spherical_attraction_strength > 0.) {
 		getInputNumber(&inp, "DPS_spherical_rcut", &_spherical_rcut, 1.);
 	}
+
+	_stress_tensor_mode = ST_ALL;
+	std::string stress_tensor_mode;
+	if(getInputString(&inp, "DPS_stress_tensor_mode", stress_tensor_mode, 0) == KEY_FOUND) {
+		if(stress_tensor_mode == "all") {
+			_stress_tensor_mode = ST_ALL;
+		}
+		else if(stress_tensor_mode == "patchy") {
+			_stress_tensor_mode = ST_PATCHY;
+		}
+		else if(stress_tensor_mode == "spherical") {
+			_stress_tensor_mode = ST_SPHERICAL;
+		}
+		else if(stress_tensor_mode == "three_body") {
+			_stress_tensor_mode = ST_THREE_BODY;
+		}
+		else if(stress_tensor_mode != "") {
+			throw oxDNAException("DPS: Unknown stress tensor mode '%s'", stress_tensor_mode.c_str());
+		}
+	}
+	OX_LOG(Logger::LOG_INFO, "DPS: Custom stress tensor mode set to '%s'", stress_tensor_mode.c_str());
 }
 
 void DetailedPatchySwapInteraction::init() {
@@ -137,7 +158,9 @@ number DetailedPatchySwapInteraction::_spherical_patchy_two_body(BaseParticle *p
 			p->force -= force;
 			q->force += force;
 
-			_update_stress_tensor(p, q, _computed_r, force);
+			if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_SPHERICAL) {
+				_update_stress_tensor(p, q, _computed_r, force);
+			}
 		}
 	}
 	else {
@@ -150,7 +173,9 @@ number DetailedPatchySwapInteraction::_spherical_patchy_two_body(BaseParticle *p
 				p->force -= force;
 				q->force += force;
 
-				_update_stress_tensor(p, q, _computed_r, force);
+				if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_SPHERICAL) {
+					_update_stress_tensor(p, q, _computed_r, force);
+				}
 			}
 		}
 	}
@@ -213,7 +238,9 @@ number DetailedPatchySwapInteraction::_patchy_two_body_point(BaseParticle *p, Ba
 							q_bond.q_torque = -p_torque;
 						}
 
-						_update_stress_tensor(p, q, _computed_r, tmp_force);
+						if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_PATCHY) {
+							_update_stress_tensor(p, q, _computed_r, tmp_force);
+						}
 					}
 
 					if(!no_three_body) {
@@ -333,7 +360,9 @@ number DetailedPatchySwapInteraction::_patchy_two_body_KF(BaseParticle *p, BaseP
 								q_bond.p_torque = -q_torque;
 								q_bond.q_torque = -p_torque;
 
-								_update_stress_tensor(p, q, _computed_r, tot_force);
+								if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_PATCHY) {
+									_update_stress_tensor(p, q, _computed_r, tot_force);
+								}
 							}
 
 							if(!no_three_body) {
@@ -378,7 +407,9 @@ number DetailedPatchySwapInteraction::_three_body(BaseParticle *p, PatchyBond &n
 					p->torque -= factor * new_bond.p_torque;
 					other->torque += factor * new_bond.q_torque;
 
-					_update_stress_tensor(p, other, new_bond.r, tmp_force);
+					if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_THREE_BODY) {
+						_update_stress_tensor(p, other, new_bond.r, tmp_force);
+					}
 				}
 
 				{
@@ -393,7 +424,9 @@ number DetailedPatchySwapInteraction::_three_body(BaseParticle *p, PatchyBond &n
 					p->torque -= factor * other_bond.p_torque;
 					other->torque += factor * other_bond.q_torque;
 					
-					_update_stress_tensor(p, other, other_bond.r, tmp_force);
+					if(_stress_tensor_mode == ST_ALL || _stress_tensor_mode == ST_THREE_BODY) {
+						_update_stress_tensor(p, other, other_bond.r, tmp_force);
+					}
 				}
 			}
 		}
