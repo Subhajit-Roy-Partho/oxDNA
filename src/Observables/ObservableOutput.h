@@ -8,10 +8,10 @@
 #ifndef OBSERVABLEOUTPUT_H_
 #define OBSERVABLEOUTPUT_H_
 
+#include "BaseObservable.h"
+
 #include <vector>
 #include <fstream>
-
-#include "BaseObservable.h"
 
 /**
  * @brief Manages a single output stream.
@@ -63,6 +63,9 @@ protected:
 	int _log_pos_in_cycle;
 	int _log_n_cycle;
 	bool _update_name_with_time;
+
+	bool _use_zstd = false;
+	int  _zstd_level = 3;
 
 	llint _bytes_written;
 

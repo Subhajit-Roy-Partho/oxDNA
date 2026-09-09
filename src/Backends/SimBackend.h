@@ -2,23 +2,16 @@
  * @file    SimBackend.h
  * @date    03/set/2010
  * @author  lorenzo
- *
- *
  */
 
 #ifndef SIMBACKEND_H_
 #define SIMBACKEND_H_
 
-#define SIM_MD 0
-#define SIM_MC 1
-
 #include "../defs.h"
 #include "../Observables/ObservableOutput.h"
 #include "../Particles/Molecule.h"
 
-#include <cmath>
-#include <fstream>
-#include <cfloat>
+#include <iosfwd>
 #include <vector>
 #include <map>
 
@@ -136,6 +129,10 @@ protected:
 	int _confs_to_skip;
 	llint _bytes_to_skip;
 
+	// Configuration compression support
+	bool _zstd_configurations;
+	std::vector<char> _zstd_read_buffer;  // Persistent buffer for reading compressed frames
+
 	/**
 	 * Reads from _conf_input three numbers in ascii or binary format, depending on the
 	 * value of the parameter.
@@ -143,6 +140,12 @@ protected:
 	 * @return a vector containing the three numbers read
 	 */
 	LR_vector _read_next_binary_vector();
+
+	/**
+	 * Reads and decompresses a single zstd-compressed configuration frame.
+	 * @return the decompressed data as a string, or empty string on EOF
+	 */
+	std::string _read_zstd_configuration();
 
 	virtual void _on_T_update();
 
@@ -197,8 +200,12 @@ public:
 	 */
 	virtual void print_observables();
 
-	virtual void update_observables_data();
+	virtual void update_observables_data(bool force=false);
 
+	/**
+	 * @brief Returns the name of the file where the error configuration was printed
+	 */
+	virtual std::string print_error_conf();
 	virtual void print_conf(bool reduced=false, bool only_last=false);
 
 	/**

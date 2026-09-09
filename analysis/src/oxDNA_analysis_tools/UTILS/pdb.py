@@ -35,7 +35,6 @@ BASES = ['DA', 'DT', 'DG', 'DC', 'DI',
 AAS = ["A", "R", "N", "D", "C", "E", "Q", "G", "H", "I", "L", "K", "M", "F", "P", "S", "T", "W", "Y", "V"]
 
 class Atom(object):
-    serial_atom = 1
 
     def __init__(self, pdb_line:str):
         object.__init__(self)
@@ -44,12 +43,25 @@ class Atom(object):
         # some PDB files have * in place of '
         if "*" in self.name:
             self.name = self.name.replace("*", "'")
-        
+
         self.alternate = pdb_line[16]
         self.residue = pdb_line[17:20].strip()
         self.chain_id = pdb_line[21:22].strip()
         self.residue_idx = int(pdb_line[22:26])
         self.pos = np.array([float(pdb_line[30:38]), float(pdb_line[38:46]), float(pdb_line[46:54])])
+
+    @classmethod
+    def from_dict(cls, name: str, residue: str, chain_id: str,
+                  residue_idx: int, pos: 'np.ndarray', alternate: str = '') -> 'Atom':
+        """Construct an Atom from named fields (e.g. parsed from mmCIF rows)."""
+        a = cls.__new__(cls)
+        a.name = name.replace('*', "'")
+        a.alternate = alternate
+        a.residue = residue
+        a.chain_id = chain_id
+        a.residue_idx = residue_idx
+        a.pos = pos
+        return a
         
     def is_hydrogen(self) -> bool:
         return "H" in self.name
@@ -91,6 +103,12 @@ class PDB_Nucleotide(object):
         self.ring_names = ["C2", "C4", "C5", "C6", "N1", "N3"]
         self.chain_id = None
 
+    def __getitem__(self, name: str) -> Atom:
+        return self.named_atoms[name]
+    
+    def __setitem__(self, name: str, atom: Atom):
+        self.named_atoms[name] = atom
+
     def get_atoms(self):
         return self.base_atoms + self.phosphate_atoms + self.sugar_atoms
 
@@ -115,6 +133,7 @@ class PDB_Nucleotide(object):
 
         return com / len(atoms)
 
+    # a3 is the vector perpendicular to the base plane
     def compute_a3(self):
         base_com = self.get_com(self.base_atoms)
         # the O4' oxygen is always (at least for non pathological configurations, as far as I know) oriented 3' -> 5' with respect to the base's centre of mass
@@ -139,18 +158,18 @@ class PDB_Nucleotide(object):
 
         self.a3 /= np.linalg.norm(self.a3)
 
+    # a1 is the vector from the CoM to the base-pairing edge
     def compute_a1(self):
         if "C" in self.name or "T" in self.name or "U" in self.name:
-            pairs = [ ["N3", "C6"], ["C2", "N1"], ["C4", "C5"] ]
+            hex_edge = ["C4", "N3", "C2"]
         else:
-            pairs = [ ["N1", "C4"], ["C2", "N3"], ["C6", "C5"] ]
-
-        self.a1 = np.array([0., 0., 0.])
-        for pair in pairs:
-            p = self.named_atoms[pair[0]]
-            q = self.named_atoms[pair[1]]
-            diff = p.pos - q.pos
-            self.a1 += diff
+            hex_edge = ["C6", "N1", "C2"]
+        
+        self.a1 = np.zeros(3)
+        c = self.get_com()
+        for a in hex_edge:
+            p = self.named_atoms[a].pos
+            self.a1 += p - c
 
         self.a1 /= np.linalg.norm(self.a1)
 
@@ -158,7 +177,6 @@ class PDB_Nucleotide(object):
         self.compute_a1()
         self.compute_a3()
         self.a2 = np.cross(self.a3, self.a1)
-        self.check = abs(np.dot(self.a1, self.a3))
         
     def correct_for_large_boxes(self, box):
         map(lambda x: x.shift(-np.rint(x.pos / box ) * box), self.get_atoms())
@@ -256,7 +274,7 @@ class PDB_AminoAcid(object):
         for a in self.get_atoms():
             if not print_H and 'H' in a.name:
                 continue
-            res.append(a.to_pdb('', bfactor))
+            res.append(a.to_pdb(bfactor))
 
         return res
 

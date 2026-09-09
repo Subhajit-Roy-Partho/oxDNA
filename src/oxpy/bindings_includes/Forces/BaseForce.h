@@ -14,6 +14,7 @@
 #include "LTCOMAngleTrap.h"
 #include "LTAtanCOMTrap.h"
 #include "LT2DCOMTrap.h"
+#include "LTCoordination.h"
 #include "MovingTrap.h"
 #include "RepulsiveSphere.h"
 
@@ -37,11 +38,24 @@ public:
 		return std::tuple<std::vector<int>, std::string>();
 	}
 
-	LR_vector value(llint step, LR_vector &pos) override {
-		PYBIND11_OVERLOAD_PURE( // @suppress("Unused return value")
+	LR_vector force(llint step, LR_vector &pos) override {
+		PYBIND11_OVERLOAD( // @suppress("Unused return value")
 				LR_vector,
 				BaseForce,
-				value,
+				force,
+				step,
+				pos
+		);
+
+		// suppress warnings
+		return LR_vector();
+	}
+
+	LR_vector torque(llint step, LR_vector &pos) override {
+		PYBIND11_OVERLOAD( // @suppress("Unused return value")
+				LR_vector,
+				BaseForce,
+				torque,
 				step,
 				pos
 		);
@@ -88,20 +102,52 @@ void export_BaseForce(py::module &m) {
 	force.def_property("id", &BaseForce::get_id, &BaseForce::set_id, "The id of the force.");
 	force.def_property_readonly("type", &BaseForce::get_type, "the string used in the external force file to specify the force type (*e.g.* `trap`).");
 
-	force.def("value", &BaseForce::value, py::arg("step"), py::arg("pos"), R"pbdoc(
-        Return the force vector that would act at the given position and time step.
+	force.def("force", &BaseForce::force, py::arg("step"), py::arg("pos"), R"pbdoc(
+		Return the force vector that would act at the given position and time step.
 
-        Parameters
-        ----------
-        step: int
-            The current time step.
-        pos: numpy.ndarray
-            The position where the force should be computed.
+		Parameters
+		----------
+		step: int
+			The current time step.
+		pos: numpy.ndarray
+			The absolute position at which the force should be computed.
 
-        Returns
-        -------
-        numpy.ndarray
-            The computed force vector.
+		Returns
+		-------
+		numpy.ndarray
+			The computed force vector.
+	)pbdoc");
+
+	force.def("value", &BaseForce::force, py::arg("step"), py::arg("pos"), R"pbdoc(
+		DEPRECATED: Use `force` instead. Return the force vector that would act at the given position and time step.
+
+		Parameters
+		----------
+		step: int
+			The current time step.
+		pos: numpy.ndarray
+			The absolute position at which the force should be computed.
+
+		Returns
+		-------
+		numpy.ndarray
+			The computed force vector.
+	)pbdoc");
+
+	force.def("torque", &BaseForce::torque, py::arg("step"), py::arg("pos"), R"pbdoc(
+		Return the torque vector that would act at the given position and time step.
+
+		Parameters
+		----------
+		step: int
+			The current time step.
+		pos: numpy.ndarray
+			The absolute position at which the torque should be computed.
+
+		Returns
+		-------
+		numpy.ndarray
+			The computed torque vector.
 	)pbdoc");
 
 	force.def("potential", &BaseForce::potential, py::arg("step"), py::arg("pos"), R"pbdoc(
@@ -145,6 +191,7 @@ Returns
 	export_LTCOMAngleTrap(sub_m);
 	export_LTAtanCOMTrap(sub_m);
 	export_LT2DCOMTrap(sub_m);
+	export_LTCoordination(sub_m);
 	export_MovingTrap(sub_m);
 	export_RepulsiveSphere(sub_m);
 }

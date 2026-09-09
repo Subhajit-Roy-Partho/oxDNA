@@ -54,6 +54,7 @@ public:
 	LR_vector _direction = LR_vector(1., 0., 0.);
 	LR_vector _pos0 = LR_vector(0., 0., 0.);
 	number _stiff;
+	BaseParticle *_current_particle = nullptr; // particle on which the force is currently acting
 	BaseParticle *_p_ptr;
 
 	BaseForce();
@@ -88,13 +89,25 @@ public:
 		return _type;
 	}
 
+	virtual void set_current_particle(BaseParticle *p) {
+		_current_particle = p;
+	}
+
 	/**
 	 * @brief returns value of the force (a vector)
 	 *
 	 * @param step useful for forces that depend on time
-	 * @param pos position of the particle
+	 * @param pos absolute position of the particle
 	 */
-	virtual LR_vector value(llint step, LR_vector &pos) = 0;
+	virtual LR_vector force(llint step, LR_vector &pos);
+
+	/**
+	 * @brief returns value of the torque (a vector)
+	 *
+	 * @param step useful for forces that depend on time
+	 * @param pos absolute position of the particle
+	 */
+	virtual LR_vector torque(llint step, LR_vector &pos);
 
 	/**
 	 * @brief returns value of the potential associated to the force (a number)

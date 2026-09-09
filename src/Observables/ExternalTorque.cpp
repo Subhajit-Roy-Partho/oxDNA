@@ -8,6 +8,9 @@
  */
 
 #include "ExternalTorque.h"
+
+#include "../Forces/BaseForce.h"
+
 #include <string>
 
 ExternalTorque::ExternalTorque() {
@@ -54,9 +57,9 @@ std::string ExternalTorque::get_output_string(llint curr_step) {
 		}
 		if(std::string(_group_name) == "") {
 			LR_vector total_force = LR_vector((number) 0., (number) 0., (number) 0.);
-			exit(1);
 			for(auto ext_force : p->ext_forces) {
-				total_force += ext_force->value(curr_step, abs_pos);
+				ext_force->set_current_particle(p);
+				total_force += ext_force->force(curr_step, abs_pos);
 			}
 			tau += distvec.cross(total_force);
 		}
@@ -65,7 +68,8 @@ std::string ExternalTorque::get_output_string(llint curr_step) {
 				//printf("CURRENT GROUP NAME %s, searching for: %s\n",f->get_group_name().c_str(),_group_name.c_str());
 				if(ext_force->get_group_name() == std::string(_group_name)) {
 					//printf("Adding torque on particle %i\n", i);
-					tau += distvec.cross(ext_force->value(curr_step, abs_pos));
+					ext_force->set_current_particle(p);
+					tau += distvec.cross(ext_force->force(curr_step, abs_pos));
 				}
 			}
 		}

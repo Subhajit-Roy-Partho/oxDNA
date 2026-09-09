@@ -1,0 +1,71 @@
+/*
+ * Coordination.cpp
+ *
+ * Created on: 10/17/2025
+ *     Author: Lorenzo
+*/
+
+#include "Coordination.h"
+
+#include "../Utilities/OrderParameters.h"
+
+Coordination::Coordination() {
+
+}
+
+Coordination::~Coordination() {
+
+}
+
+void Coordination::get_settings(input_file &my_inp, input_file &sim_inp) {
+	BaseObservable::get_settings(my_inp, sim_inp);
+
+    getInputString(&my_inp, "op_file", _op_file, 1);
+    _settings.get_settings(my_inp);
+}
+
+void Coordination::init() {
+	BaseObservable::init();
+
+    OrderParameters op;
+    op.init_from_file(_op_file.c_str(), CONFIG_INFO->particles(), CONFIG_INFO->N());
+    if(op.get_distance_parameters_count() > 0) {
+        throw oxDNAException("Coordination: distance-based order parameters are not supported");
+    }
+
+    if(op.get_hb_parameters_count() == 0) {
+        throw oxDNAException("Coordination: no hydrogen-bond-based order parameters found in the specified op_file");
+    }
+
+    if(op.get_hb_parameters_count() > 1) {
+        throw oxDNAException("Coordination: only one hydrogen-bond-based order parameter is supported");
+    }
+
+    auto all_index_pairs = op.get_hb_particle_list();
+    std::vector<int> p_indices;
+    p_indices.reserve(all_index_pairs.size() * 2);
+    for(auto &pair : all_index_pairs) {
+        p_indices.push_back(pair.first);
+        p_indices.push_back(pair.second);
+
+        BaseParticle *p1 = CONFIG_INFO->particles()[pair.first];
+        BaseParticle *p2 = CONFIG_INFO->particles()[pair.second];
+
+        _all_pairs.push_back(std::make_pair(p1, p2));
+    }
+
+    // sorting is not necessary, but nice if we want to print all indices for debugging purposes
+    // and also convenient to check for duplicates
+    std::sort(p_indices.begin(), p_indices.end());
+
+    // here we look for duplicates
+    auto it = std::adjacent_find(p_indices.begin(), p_indices.end());
+    if(it != p_indices.end()) {
+        throw oxDNAException("LTCoordination: duplicate particle index found in the op_file: %d", *it);
+    }
+}
+
+std::string Coordination::get_output_string(llint curr_step) {
+    number coordination = meta::coordination(_settings, _all_pairs);
+    return Utils::sformat("%lf", coordination);
+}

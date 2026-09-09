@@ -21,6 +21,8 @@ The following options are supported:
 * `stop_at`: the number of steps beyond which the output will stop being written. Defaults to -1 ("never").
 * `only_last`: overwrite the content of the output with the current one.
 * `update_name_with_time`: change the name of the output file every time the output is printed by appending the current simulation time step to `name`.
+* `compress`: compress the output using [zstd](https://github.com/facebook/zstd). Requires compiling the code with `-DZSTD_ENABLED=On`. Compressed files can be decompressed with external tools such as [the one provided in the `utils` folder](./utils.md#decompress_zstdpy). Defaults to `false`.
+* `zstd_level`: zstd compression level. Only used if `compress = true`. Defaults to 3.
 
 An example is:
 
@@ -137,6 +139,14 @@ Print forces and torques due to nucleotide-nucleotide interactions. By default, 
 * `type = pair_force`: the observable type.
 * `[particle_id = <int>]`: if set, only pairs in which one of the particles has the given id will be considered.
 
+## Forces and torques on individual particles
+
+Print forces and torques of individual particles. 
+
+* `type = force_and_torque`: the observable type.
+* `particle = <string>`: index of the first particle or comma-separated list of particle indexes composing the first set. Use `all` or `-1` to print information about all particles.
+* `[lab_frame = <bool>]`: print torques in the laboratory reference frame. Defaults to `true`.
+
 ## Distance between two (sets of) particles
 
 Print the euclidean distance between two particles or between the centres of mass of two sets of particles.
@@ -224,6 +234,12 @@ Compute the stress autocorrelation function $G(t)$ using the multi-tau method de
 * `[m = <int>]`: size of the average used by the algorithm. Defaults to 2.
 * `[p = <int>]`: The size of the coarse-grained levels used by the algorithm. Defaults to 16.
 * `[serialise = <bool>]`: if `true`, every time the observable is printed, also generate files that can be used to recreate the observable's data structures. This makes it possible to restart simulations that keep accumulating statistics for the autocorrelation. Note that if this is set to `true`, then the observable will look for these files to reload the data upon restarting. Defaults to `false`.
+
+## Particle stress
+
+Print the per-particle stress tensor (one line per particle, with this ordering: $\sigma_{xx}, \sigma_{yy}, \sigma_{zz}, \sigma_{xy}, \sigma_{xz}, \sigma_{yz}$). For each pair interaction, the stress is split evenly between the two involved particles.
+
+* `[print_coordinates = <bool>]`: if `true`, the coordinates of each particle are also printed following the stress tensor.
 
 ## Pitch
 

@@ -49,11 +49,9 @@ protected:
 
 	llint _barostat_attempts, _barostat_accepted;
 	int _update_st_every = 0;
+	bool _update_particle_st = false;
 
 	bool _print_energy;
-
-	ObservableOutput *_obs_output_error_conf;
-	std::string _error_conf_file;
 
 	std::shared_ptr<CUDABaseThermostat> _cuda_thermostat;
 

@@ -2,26 +2,10 @@
 
 #include "meta_utils.h"
 #include "../../Particles/BaseParticle.h"
+#include "../../Boxes/BaseBox.h"
 
 #include <string>
 #include <iostream>
-
-inline number interpolatePotential(const number my_x, const number dX, const number xmin, const std::vector<number> &potential_grid) {
-	number x_left = dX * std::floor(my_x / dX);
-	number x_right = x_left + dX;
-	number ix_left = std::floor((my_x - xmin) / dX);
-	number ix_right = ix_left + 1;
-	number f11 = potential_grid[ix_left];
-	number f21 = potential_grid[ix_right];
-	number fx = (x_right - my_x) / dX * f11 + (my_x - x_left) / dX * f21;
-	return fx;
-}
-
-inline number get_x_force(const number x, const number dX, const number xmin, const std::vector<number> &potential_grid) {
-	number ix_left = std::floor((x - xmin) / dX);
-	number ix_right = ix_left + 1;
-	return -(potential_grid[ix_right] - potential_grid[ix_left]) / dX;
-}
 
 LTCOMAngleTrap::LTCOMAngleTrap() :
 				BaseForce() {
@@ -75,7 +59,7 @@ LR_vector LTCOMAngleTrap::_distance(LR_vector u, LR_vector v) {
 		return v - u;
 }
 
-LR_vector LTCOMAngleTrap::value(llint step, LR_vector &pos) {
+LR_vector LTCOMAngleTrap::force(llint step, LR_vector &pos) {
 	LR_vector p1a_vec = meta::particle_list_com(_p1a_ptr, CONFIG_INFO->box);
 	LR_vector p2a_vec = meta::particle_list_com(_p2a_ptr, CONFIG_INFO->box);
 	LR_vector p3a_vec = meta::particle_list_com(_p3a_ptr, CONFIG_INFO->box);
@@ -98,7 +82,7 @@ LR_vector LTCOMAngleTrap::value(llint step, LR_vector &pos) {
 	}
 
 	else {
-		xforce = get_x_force(angle, dX, xmin, potential_grid);
+		xforce = meta::get_x_force(angle, dX, xmin, potential_grid);
 	}
 
 	number prefactor = -xforce / std::pow(1 - dot_product, 0.5);
@@ -144,7 +128,7 @@ number LTCOMAngleTrap::potential(llint step, LR_vector &pos) {
 	}
 
 	else {
-		my_potential = interpolatePotential(angle, dX, xmin, potential_grid);
+		my_potential = meta::interpolate_potential(angle, dX, xmin, potential_grid);
 	}
 
 	if(_mode == 1) {
