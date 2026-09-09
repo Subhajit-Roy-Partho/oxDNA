@@ -1,212 +1,189 @@
-# Metal Backend Build Instructions
+# Metal backend for oxDNA (Apple Silicon)
 
-## ✅ Build Status: SUCCESS
+The Metal backend runs oxDNA molecular dynamics on Apple GPUs (M-series). It is
+the Apple-GPU analogue of the CUDA backend: the force/torque evaluation, the
+Verlet-list build and the velocity-Verlet integration all run on the GPU.
 
-The oxDNA Metal backend for Apple Silicon (M-series) GPUs has been successfully compiled!
+- **Working today:** MD with `interaction_type = DNA` and `DNA2` (oxDNA1 and
+  oxDNA2), including hydrogen bonding, stacking, cross-/coaxial stacking,
+  excluded volume, FENE with the `max_backbone_force` cap, and Debye-Hückel.
+  The Brownian (`brownian` / `john`) thermostat.
+- **CPU fallback:** every other interaction (RNA, LJ, patchy, TEP, …) runs
+  through a CPU force fallback — correct but not faster than the CPU backend.
+- **Not ported:** MC/VMMC, barostat/NPT, FFS, external forces on the GPU,
+  the stress tensor.
 
-## Build Summary
+---
 
-### Configuration
-- **Build System**: CMake + Ninja
-- **GPU Backend**: Metal (Apple GPU API)
-- **Precision**: Single precision (float)
-- **Build Type**: Release
-- **Platform**: macOS (Apple Silicon M4 compatible)
-
-### Compiled Executables
-
-Located in `build_metal/bin/`:
-
-- `oxDNA` (3.8 MB) - Main simulation executable
-- `DNAnalysis` (3.5 MB) - Analysis tool
-- `confGenerator` (3.1 MB) - Configuration generator
-
-### Metal Symbols Verified
-
-The build includes Metal-specific symbols:
-- `create_metal_backend()` - Factory function
-- `MD_MetalBackend` - Molecular dynamics backend
-- `MetalUtils` - GPU utility functions
-- Metal buffer allocation and management functions
-
-## How to Build
+## Build
 
 ### Prerequisites
 
-1. macOS 10.15 or later
-2. Apple Silicon (M1/M2/M3/M4) or Metal-capable GPU
-3. Xcode Command Line Tools
-4. CMake 3.5 or later
-5. Ninja build system
+- macOS with an Apple-Silicon GPU
+- Xcode + Command Line Tools
+- The Metal shader toolchain. If `xcrun -sdk macosx metal --version` fails:
+  ```bash
+  xcodebuild -downloadComponent MetalToolchain
+  ```
+- CMake ≥ 3.5, Ninja
+- (optional) `libomp` for `-DUSE_OPENMP=ON`: `brew install libomp`
+
+### Configure and build
 
 ```bash
-# Install prerequisites (if not already installed)
-xcode-select --install
-brew install cmake ninja
+cd oxDNA
+cmake -S . -B build_metal -G Ninja -DMETAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build_metal -j8
 ```
 
-### Build Commands
+Executables land in `build_metal/bin/` (`oxDNA`, `DNAnalysis`, `confGenerator`)
+together with `shaders.metallib`, which the executable loads at run time from
+its own directory or from `src/Metal/build/`.
 
-```bash
-# Create build directory
-mkdir build_metal
-cd build_metal
+### Build options
 
-# Configure with CMake
-cmake -G Ninja -DMETAL=ON -DCMAKE_BUILD_TYPE=Release ..
+| option | meaning |
+|--------|---------|
+| `-DMETAL=ON` | enable the Metal backend (mutually exclusive with `-DCUDA=ON`) |
+| `-DUSE_OPENMP=ON` | multithread the CPU-side integration loops used by the `hardmixed` tier and the CPU fallback (needs an OpenMP runtime) |
+| ~~`-DMETAL_DOUBLE=ON`~~ | **removed** — Apple GPUs have no hardware double precision. Configuring with it is a hard error. Choose accuracy at run time with `backend_precision` (below). |
 
-# Compile
-ninja -j8
+---
 
-# Executables will be in build_metal/bin/
-```
+## Running
 
-### Build Options
-
-- `-DMETAL=ON` - Enable Metal GPU support
-- `-DMETAL_DOUBLE=ON` - Use double precision (default: single/float)
-- `-DCMAKE_BUILD_TYPE=Release` - Optimized build
-- `-DCMAKE_BUILD_TYPE=Debug` - Debug build with symbols
-
-## Using the Metal Backend
-
-### Input File Configuration
-
-To use the Metal backend, add these options to your input file:
+Minimal input file:
 
 ```
 backend = Metal
-backend_precision = float  # or 'double' if compiled with METAL_DOUBLE=ON
+Metal_avoid_cpu_calculations = 1     # 1 = native GPU kernels, 0 = CPU force fallback
+backend_precision = float            # float | mixed | hardmixed  (see below)
 
-# Metal-specific options
-Metal_sort_every = 0              # Particle sorting interval (0 = disabled)
-threads_per_threadgroup = 256     # Threads per threadgroup
-Metal_avoid_cpu_calculations = 1  # Avoid CPU fallback
-```
-
-### Example Input File
-
-```
-backend = Metal
 sim_type = MD
-
-# System parameters
-backend_precision = float
+interaction_type = DNA               # or DNA2
 T = 300K
-dt = 0.005
+dt = 0.003
+thermostat = brownian
+diff_coeff = 2.5
+newtonian_steps = 53
+verlet_skin = 0.1
+max_backbone_force = 10.0            # recommended: caps the FENE force
 
-# Metal GPU settings
-threads_per_threadgroup = 256
-Metal_sort_every = 0
-
-# Other standard oxDNA options...
+steps = 1000000
+conf_file = init.conf
+topology = init.top
+trajectory_file = trajectory.dat
+energy_file = energy.dat
 ```
 
-## Implementation Status
+### `Metal_avoid_cpu_calculations`
 
-### ✅ Completed Features
+- `1` — native GPU force kernels. Use this for `DNA`/`DNA2`.
+- `0` — CPU force fallback: positions are copied to the CPU each step, the
+  normal CPU interaction computes the forces, and the result is copied back.
+  Physically identical to the CPU backend (≈1e-6 relative energy error) but no
+  faster. This is the only correct option for RNA/LJ/patchy/TEP today.
 
-- Metal device management and initialization
-- Memory allocation with Metal buffers (unified memory)
-- Velocity Verlet integration kernels
-- Position and velocity updates with periodic boundary conditions
-- Kernel pipeline management
-- Host-GPU data transfer
-- Backend factory integration
+### `backend_precision`
 
-### ⏳ TODO Features
+Apple GPUs cannot do `double` in a shader at all, so the CUDA `double` and
+`mixed` kernels have no direct port. The three tiers below are the achievable
+analogues; all of them evaluate **forces in float32**.
 
-The following features are planned but not yet implemented:
+| tier | positions / velocities / L | integration | when to use |
+|------|----------------------------|-------------|-------------|
+| `float` (default) | float32 | float32 velocity-Verlet on the GPU | default; fastest |
+| `mixed` | double-float (df64: a pair of float32, ~48-bit mantissa) | df64 velocity-Verlet on the GPU | long runs where float position round-off matters; ~15 % slower than `float` |
+| `hardmixed` | native `double` on the CPU | `double` velocity-Verlet on the CPU over the shared unified-memory buffers (OpenMP-parallel with `-DUSE_OPENMP=ON`) | maximum integration accuracy; ~2.4× slower than `float` |
 
-- Force calculation kernels (DNA, RNA, LJ interactions)
-- Neighbor list implementations
-- Thermostats (Brownian, Langevin, Bussi)
-- Barostat for NPT ensemble
-- Stress tensor calculation
-- External forces
-- Particle sorting optimization (Hilbert curve)
-- Rigid body dynamics
-- Full performance optimizations
+`backend_precision = double` is rejected with a message pointing at `mixed` /
+`hardmixed`.
 
-## Performance Notes
+**How `mixed` works.** Positions, velocities and angular momenta are stored as
+`hi`/`lo` float pairs (`src/Metal/Shaders/df64.h`: error-free `TwoSum`, FMA-based
+`TwoProd`, Dekker addition — see Thall, *Extended-precision floating-point
+numbers for GPU computation*, 2006). The `first_step_mixed` / `second_step_mixed`
+kernels integrate in df64 and write a plain-float "mirror" of each quantity that
+the force kernels, the Verlet-list check and the thermostat read. When the GPU
+thermostat rescales velocities, `mixed_sync_df_vels` re-splits the mirror back
+into df64.
 
-### Apple Silicon Advantages
+**How `hardmixed` works.** Each step: the GPU computes float forces/torques into
+shared buffers; the CPU reads them straight out of unified memory (no copy),
+runs the velocity-Verlet half-kicks and the quaternion update in `double`, and
+writes float positions/orientations back for the next force evaluation. The GPU
+Verlet lists are rebuilt on the host displacement check, exactly like `float`.
 
-- **Unified Memory Architecture**: Host and GPU share physical memory
-- **Fast Data Transfer**: No explicit copying in many cases
-- **SIMD Width**: 32 threads (similar to CUDA warps)
-- **Optimal Threadgroup Size**: 256 threads per threadgroup
+---
 
-### Memory Model
+## Accuracy and performance
 
-Metal uses `MTLResourceStorageModeShared` for CPU-GPU accessible buffers, which is very efficient on Apple Silicon's unified memory architecture.
+Apple M4, `Metal_EXAMPLE` (32 768 nucleotides, `interaction_type = DNA`),
+3000 NVE steps, wall-clock, against the `-DDOUBLE=ON` CPU backend:
 
-## Files Created
+| backend / tier | E_tot after 3000 steps | rel. error vs CPU | wall time | speed-up |
+|----------------|------------------------|-------------------|-----------|----------|
+| CPU (double)   | −1.077815              | —                 | 131.5 s   | 1.0×     |
+| Metal `float`  | −1.077816              | 1 × 10⁻⁶          | 10.4 s    | **12.6×** |
+| Metal `mixed`  | −1.077817              | 2 × 10⁻⁶          | 12.1 s    | **10.9×** |
+| Metal `hardmixed` | −1.077819           | 4 × 10⁻⁶          | 25.0 s    | **5.3×**  |
 
-### Core Files
+With the Brownian thermostat (`dt = 0.002`, `newtonian_steps = 53`) every tier
+holds ⟨KE⟩/N ≈ 0.300 (= 6 · T/2 for a rigid nucleotide). Trajectories diverge
+from the CPU run only through the RNG stream (the GPU thermostat uses a
+per-particle PCG generator, the CPU one a single `drand48` stream) — this is
+expected for a stochastic simulation.
 
-```
-src/Metal/
-├── metal_defs.h                 # Metal types and definitions
-├── MetalUtils.h/mm             # Utility functions
-├── MetalBackendFactory.mm      # Backend factory
-├── CMakeLists.txt              # Build configuration
-├── README.md                   # Documentation
-├── Backends/
-│   ├── MetalBaseBackend.h/mm   # Base backend
-│   └── MD_MetalBackend.h/mm    # MD backend
-├── Shaders/
-│   ├── common.metal            # Common shader functions
-│   └── md_kernels.metal        # MD kernels
-└── metal_utils/
-    └── MetalBox.h              # Simulation box
-```
-
-### Modified Files
-
-- `CMakeLists.txt` - Added Metal option
-- `src/CMakeLists.txt` - Metal source integration
-- `src/Backends/BackendFactory.cpp` - Metal backend factory
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Metal not found**: Ensure you're on macOS 10.15+ with Metal support
-2. **Objective-C++ errors**: Make sure `.mm` files are compiled with Objective-C++
-3. **Linking errors**: Verify Metal frameworks are linked (Metal, Foundation, CoreGraphics)
-
-### Verification
-
-Check if Metal backend is available:
+Validate on your own machine:
 
 ```bash
-# Binary should contain Metal symbols
-nm bin/oxDNA | grep -i metal
-
-# Should see symbols like:
-# - create_metal_backend
-# - MD_MetalBackend
-# - MetalUtils
+cmake -S . -B build_cpu -G Ninja -DCMAKE_BUILD_TYPE=Release -DDOUBLE=ON
+cmake --build build_cpu -j8 --target oxDNA confGenerator
+cd comparison_run
+python3 validate_metal_forcefields.py --metal-avoid-cpu-calculations 1 --scenarios dna dna2
+python3 validate_metal_forcefields.py --metal-avoid-cpu-calculations 0   # all forcefields, fallback
 ```
 
-## Next Steps
+---
 
-To complete the Metal backend implementation:
+## Implementation notes
 
-1. **Implement Force Kernels**: Port DNA/RNA/LJ interaction calculations
-2. **Add Neighbor Lists**: Implement Verlet lists for Metal
-3. **Thermostats**: Add temperature control methods
-4. **Optimize**: Profile and optimize for Apple GPU architecture
-5. **Test**: Validate against CPU and CUDA results
+| file | contents |
+|------|----------|
+| `src/Metal/Backends/MD_MetalBackend.mm` | the MD driver: per-step command-buffer batching, the three precision paths, the CPU-fallback / hardmixed path |
+| `src/Metal/Shaders/dna_kernels.metal` | DNA/DNA2 force + torque kernel — a line-by-line port of `src/CUDA/Interactions/CUDA_DNA.cuh`. Torque is returned in the particle body frame. |
+| `src/Metal/Shaders/md_kernels.metal` | float and df64 velocity-Verlet kernels |
+| `src/Metal/Shaders/df64.h` | double-float arithmetic |
+| `src/Metal/Lists/MetalSimpleVerletList.mm` | GPU cell + Verlet-list build; `lists_are_old()` host-side skin check |
+| `src/Metal/Interactions/MetalCPUForceFallback.mm` | CPU force fallback |
 
-## References
+### Why the whole step is one command buffer
 
-- [Metal Programming Guide](https://developer.apple.com/metal/)
-- [Metal Shading Language Spec](https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf)
-- [Metal Best Practices](https://developer.apple.com/documentation/metal/best_practices)
-- [oxDNA Documentation](https://lorenzo-rovigatti.github.io/oxDNA/)
+The native `float` and `mixed` paths encode `first_step → zero → forces →
+second_step → thermostat` into a **single** `MTLCommandBuffer` with one
+`waitUntilCompleted`. An earlier version issued five separate command buffers
+per step, each with its own blocking wait, and was dominated by command-buffer
+round-trip latency rather than GPU compute (≈5× slower).
 
-## Contributors
+### OpenMP / CPU multithreading
 
-Metal backend implementation for Apple Silicon M4 GPU.
+`-DUSE_OPENMP=ON` multithreads the CPU-side per-particle loops in the Metal
+backend (`hardmixed` integration, buffer packing, the force/velocity sync-backs).
+
+The **CPU MD/MC backends themselves are still single-threaded.** Their hot loop
+is the pairwise force sum (~95 % of CPU MD time), and parallelizing it correctly
+needs core changes that are out of scope here:
+
+1. `BaseInteraction::_computed_r` / `_is_infinite` are mutable scratch members
+   shared between `pair_interaction_*` and its helpers — threads sharing one
+   interaction object race on them.
+2. `BaseList::get_neigh_list(p)` is a half list and `pair_interaction_nonbonded`
+   applies Newton's third law (writes `p->force` **and** `q->force`), so a loop
+   over `p` races on `q->force`.
+
+A correct implementation needs thread-local interaction scratch plus either a
+full neighbour list with one-sided force output, per-thread force buffers with a
+reduction, or cell colouring. On Apple Silicon, prefer the Metal `float` /
+`mixed` tiers (10–12×) over CPU threads. Monte Carlo is a sequential Markov
+chain; "multicore MC" means independent replicas / parallel tempering, which
+`PT_VMMC_CPUBackend` already provides through MPI.

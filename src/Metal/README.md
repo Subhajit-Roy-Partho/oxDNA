@@ -15,37 +15,41 @@ src/Metal/
 ├── Backends/                 # Simulation backends
 │   ├── MetalBaseBackend.h/.mm    # Base Metal backend
 │   └── MD_MetalBackend.h/.mm     # Molecular dynamics backend
-├── Interactions/             # Force field implementations (TODO)
-├── Lists/                    # Neighbor list implementations (TODO)
-├── Thermostats/             # Temperature control (TODO)
-├── Shaders/                 # Metal shader kernels
-│   ├── common.metal         # Common shader functions
-│   └── md_kernels.metal     # MD-specific kernels
-└── metal_utils/             # Utility structures
-    └── MetalBox.h           # Simulation box structure
+├── Interactions/             # MetalDNAInteraction (native), MetalCPUForceFallback, stubs for RNA/LJ/patchy/TEP
+├── Lists/                    # MetalSimpleVerletList (GPU cells + Verlet list), MetalNoList
+├── Thermostats/              # MetalBrownianThermostat
+├── Shaders/                  # Metal shader kernels
+│   ├── common.metal          # Common shader functions
+│   ├── md_kernels.metal      # float + df64 velocity-Verlet kernels
+│   ├── dna_kernels.metal     # DNA/DNA2 force + torque kernel (port of CUDA_DNA.cuh)
+│   ├── list_kernels.metal    # cell fill + neighbour-list build
+│   ├── thermostat_kernels.metal
+│   └── df64.h                # double-float arithmetic for backend_precision = mixed
+└── metal_utils/              # Utility structures
+    └── MetalBox.h            # Simulation box structure
 ```
 
 ## Key Features
 
 ### Implemented
-- ✅ Base Metal backend infrastructure
-- ✅ Device management and initialization
-- ✅ Memory management with Metal buffers
-- ✅ Velocity Verlet integration kernels
-- ✅ Position and velocity updates with PBC
-- ✅ Kernel pipeline management
-- ✅ Host-GPU data transfer
+- ✅ Base Metal backend infrastructure, device/memory management, unified-memory buffers
+- ✅ Velocity Verlet integration (float and df64), rigid-body quaternion update
+- ✅ **Native DNA / DNA2 force+torque kernel** — FENE + `max_backbone_force` cap,
+  bonded/non-bonded excluded volume, stacking, hydrogen bonding, cross stacking,
+  coaxial stacking (oxDNA1 + oxDNA2), Debye-Hückel. Matches the CPU backend to ~1e-6.
+- ✅ GPU cell list + Verlet list with a host-side skin check
+- ✅ Brownian / `john` thermostat on the GPU
+- ✅ CPU force fallback for every other interaction (correct, not faster than CPU)
+- ✅ Three precision tiers: `float`, `mixed` (df64), `hardmixed` (CPU double integration)
+- ✅ Whole-step command-buffer batching (one GPU submission per MD step)
+- ✅ Optional OpenMP for the CPU-side integration loops (`-DUSE_OPENMP=ON`)
 
 ### TODO
-- ⬜ Force calculation kernels (DNA, RNA, LJ, etc.)
-- ⬜ Neighbor list implementations
-- ⬜ Thermostat implementations (Brownian, Langevin, Bussi)
-- ⬜ Barostat for NPT ensemble
-- ⬜ Stress tensor calculation
-- ⬜ External forces
-- ⬜ Particle sorting optimization
-- ⬜ Rigid body dynamics
-- ⬜ Performance optimizations
+- ⬜ Native RNA / LJ / patchy / TEP force kernels (currently CPU-fallback only)
+- ⬜ Barostat / NPT, stress tensor, external forces on the GPU
+- ⬜ MC / VMMC
+- ⬜ Particle sorting (Hilbert curve) for neighbour-list locality
+- ⬜ Overlap force evaluation with the next step's list build
 
 ## Requirements
 
@@ -56,32 +60,35 @@ src/Metal/
 
 ## Building
 
-To build oxDNA with Metal support:
+See `BUILD_METAL.md` in the repository root for the full instructions. In short:
 
 ```bash
-mkdir build
-cd build
-cmake -DMETAL=ON ..
-make
+cmake -S . -B build_metal -G Ninja -DMETAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build_metal -j8
 ```
 
 Optional flags:
-- `-DMETAL_DOUBLE=ON` - Use double precision (default: single precision)
-- `-DCMAKE_BUILD_TYPE=Debug` - Build with debug symbols
+- `-DUSE_OPENMP=ON` - multithread the CPU-side integration loops (needs libomp)
+- `-DCMAKE_BUILD_TYPE=Debug` - build with debug symbols
+- ~~`-DMETAL_DOUBLE=ON`~~ - **removed**: Apple GPUs have no hardware double
+  precision. Select accuracy at run time with `backend_precision`.
 
 ## Usage
 
-Configure your input file to use the Metal backend:
-
 ```
-backend = MD_Metal
-backend_precision = float  # or 'double' if compiled with METAL_DOUBLE
-
-# Metal-specific options
-Metal_sort_every = 0              # Particle sorting interval (0 = disabled)
-threads_per_threadgroup = 256     # Threads per threadgroup (default: 256)
-Metal_avoid_cpu_calculations = 1  # Avoid CPU fallback computations
+backend = Metal
+Metal_avoid_cpu_calculations = 1   # 1 = native GPU kernels (DNA/DNA2), 0 = CPU force fallback
+backend_precision = float          # float | mixed | hardmixed
+interaction_type = DNA             # or DNA2
+max_backbone_force = 10.0          # recommended
 ```
+
+- `backend_precision = float` — everything float32 on the GPU. Fastest.
+- `backend_precision = mixed` — positions/velocities/momenta as double-float
+  (df64) pairs, df64 velocity-Verlet; forces stay float32. ~15 % slower.
+- `backend_precision = hardmixed` — GPU float forces, CPU `double` integration
+  over the shared buffers. Most accurate, ~2.4× slower than `float`.
+- `backend_precision = double` is rejected (no GPU double on Apple).
 
 ## Architecture
 
@@ -97,11 +104,13 @@ Metal uses a unified memory architecture on Apple Silicon, which means:
 - **SIMD width**: 32 on Apple GPUs (similar to CUDA warps)
 
 ### Type System
-- `m_number`: Configurable precision (float/double)
-- `m_number3`: 3D vector (simd_float3/simd_double3)
-- `m_number4`: 4D vector (simd_float4/simd_double4)
-- `MetalBonds`: Bond connectivity structure
-- `MetalBox`: Simulation box with PBC
+- `m_number` / `m_number3` / `m_number4`: **always** `float` / `simd_float3` /
+  `simd_float4`. Apple GPUs have no `double` in a shader; higher accuracy is a
+  run-time choice (`backend_precision`), never a compile-time type change.
+- `df64` (`Shaders/df64.h`): a `hi`+`lo` pair of `float` giving ~48-bit mantissa,
+  used by the `mixed` tier for positions/velocities/momenta.
+- `MetalBonds`: bond connectivity structure
+- `MetalBox`: simulation box with PBC
 
 ## Implementation Details
 

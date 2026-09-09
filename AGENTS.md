@@ -5,9 +5,9 @@
 
 ## Current Status
 
-**Last Updated:** 2026-09-09 12:29
-**Last Session Summary:** _Merged master into `metal`, ported the native DNA/DNA2 GPU force kernel from CUDA, batched the MD step — native path is now ~9× faster than the CPU backend and matches its energies. Starting the precision-tier + multicore work._
-**Resume From:** _Phase A — introduce `backend_precision` handling (`float` / `hardmixed` / `mixed`) in `src/Metal/Backends/MD_MetalBackend.mm` and `src/Metal/Shaders/dna_kernels.metal`._
+**Last Updated:** 2026-09-09 16:40
+**Last Session Summary:** _Metal `float`/`mixed`/`hardmixed` precision tiers implemented, validated against the CPU backend (E match 1e-6 / 2e-6 / 4e-6) and committed/pushed. Optional `-DUSE_OPENMP` wired for the Metal CPU-integration loops. Investigating OpenMP for the CPU MD/MC force loop._
+**Resume From:** _#11 — CPU-backend OpenMP is blocked by two architectural issues (see Session Log 2026-09-09); decide whether to do the core refactor. Then #13 documentation._
 
 ---
 
@@ -15,13 +15,9 @@
 
 | ID | Task | Status | Started |
 |----|------|--------|---------|
-| #7 | Phase A: precision-mode scaffolding — `backend_precision` = `float` / `hardmixed` / `mixed`; reject GPU `double` with guidance (Metal has no hardware double) | 🔄 In Progress | 2026-09-09 |
-| #8 | Phase B: `float` mode — formalize the current native path as the float precision class; clean up the dead `METAL_DOUBLE` shader typedef | ⏳ Pending | 2026-09-09 |
-| #9 | Phase C: `hardmixed` mode — GPU float forces + CPU double velocity-Verlet over shared (unified-memory) buffers; OpenMP-parallel CPU integration; tune the energy accumulation | ⏳ Pending | 2026-09-09 |
-| #10 | Phase D: `mixed` mode — double-float (df64, Thall 2006 / Dekker / Knuth two-sum) arithmetic in MSL; df64 positions + integration; optimize | ⏳ Pending | 2026-09-09 |
-| #11 | Phase E: investigate + prototype OpenMP for the CPU MD (and MC) backends — currently single-threaded; document feasibility, implement force loop if safe | ⏳ Pending | 2026-09-09 |
-| #12 | Phase F: full CPU-vs-GPU energy comparison for `float` / `hardmixed` / `mixed`; benchmark + report speed-ups for every case | ⏳ Pending | 2026-09-09 |
-| #13 | Phase G: detailed documentation — update `BUILD_METAL.md` / `src/Metal/README.md`, precision-mode guide, benchmark table | ⏳ Pending | 2026-09-09 |
+| #11 | OpenMP for the **CPU** MD/MC force loop — blocked by core architecture (stateful `BaseInteraction::_computed_r`; half neighbour lists + Newton's-3rd-law force races). Metal-side OpenMP is done. Needs a decision on the invasive refactor. | ⏸️ Paused | 2026-09-09 |
+| #12 | Extend the benchmark: smaller system + longer runs, `mixed` df64 drift over 1e5+ steps, a table in the docs | 🔄 In Progress | 2026-09-09 |
+| #13 | Documentation — `BUILD_METAL.md` precision-mode section, `src/Metal/README.md`, df64 notes, benchmark table, OpenMP status | ⏳ Pending | 2026-09-09 |
 
 ---
 
@@ -30,23 +26,45 @@
 | ID | Task | Completed |
 |----|------|-----------|
 | #1 | Pull `origin/master` into `metal` (was 148 commits behind); resolve conflicts; push | 2026-09-08 |
-| #2 | Install Metal toolchain (`xcodebuild -downloadComponent MetalToolchain`); build `-DMETAL=ON` | 2026-09-08 |
-| #3 | Diagnose both run modes with `comparison_run/validate_metal_forcefields.py` (fallback correct-but-slow; native broken) | 2026-09-08 |
-| #4 | Fix CPU-fallback path to rebuild Verlet lists only past the skin (48 s → 35 s on 32k) | 2026-09-08 |
-| #5 | Port native DNA/DNA2 force+torque kernel faithfully from `CUDA_DNA.cuh` (HB, cross/coaxial stacking, Debye-Hückel, FENE cap, body-frame torque); skin-aware rebuilds. Native 32k run: crash → 0.79 s, energies match CPU | 2026-09-09 |
-| #6 | Batch the whole native MD step into one GPU submission (5 waits/step → 1). 32k/2000 steps wall: 30.6 s CPU → 3.3 s Metal-native | 2026-09-09 |
+| #2 | Install Metal toolchain; build `-DMETAL=ON` | 2026-09-08 |
+| #3 | Diagnose both run modes with `comparison_run/validate_metal_forcefields.py` | 2026-09-08 |
+| #4 | Fix CPU-fallback path to rebuild Verlet lists only past the skin | 2026-09-08 |
+| #5 | Port native DNA/DNA2 force+torque kernel faithfully from `CUDA_DNA.cuh` | 2026-09-09 |
+| #6 | Batch the whole native MD step into one GPU submission (5 waits/step → 1) | 2026-09-09 |
+| #7 | Phase A: `backend_precision` scaffolding (`float`/`mixed`/`hardmixed`); reject GPU `double` / `-DMETAL_DOUBLE` | 2026-09-09 |
+| #8 | Phase B: `float` tier = the native path; dead `METAL_DOUBLE` shader typedef removed | 2026-09-09 |
+| #9 | Phase C: `hardmixed` tier — GPU float forces + CPU double velocity-Verlet over shared buffers; `_sync_forces_torques_from_gpu`/`_sync_vels_Ls_from_gpu`; OpenMP on those loops | 2026-09-09 |
+| #10 | Phase D: `mixed` tier — `src/Metal/Shaders/df64.h` double-float library + `first_step_mixed`/`second_step_mixed`/`mixed_sync_df_vels` kernels | 2026-09-09 |
+| #12a | Energy validation for all three tiers (NVE + Brownian thermostat) vs CPU backend; regression run of `validate_metal_forcefields.py` (fallback 7/7, native DNA/DNA2 pass) | 2026-09-09 |
+
+---
+
+## Benchmarks (Apple M4, Metal_EXAMPLE = 32768 nucleotides, DNA interaction)
+
+3000 NVE steps, wall-clock, vs the double-precision CPU backend:
+
+| backend / tier          | E_tot @ 3000 | rel. err vs CPU | wall time | speed-up |
+|-------------------------|--------------|-----------------|-----------|----------|
+| CPU (`-DDOUBLE=ON`)     | -1.077815    | —               | 131.5 s   | 1.0x     |
+| Metal `float`           | -1.077816    | 1e-6            | 10.4 s    | 12.6x    |
+| Metal `mixed` (df64)    | -1.077817    | 2e-6            | 12.1 s    | 10.9x    |
+| Metal `hardmixed`       | -1.077819    | 4e-6            | 25.0 s    | 5.3x     |
+
+Brownian thermostat (dt 0.002, newtonian_steps 53): all tiers hold <KE>/N ≈ 0.300 (= 6 · T/2).
 
 ---
 
 ## Session Log
 
 ### 2026-09-08
-- Started: user asked to keep `metal` up to date with master, build the Metal backend, verify, optimize, test on examples.
-- Progress: merged master (4 conflicts), installed Metal toolchain, built all 3 binaries + shaders.metallib. Found the CPU-fallback path correct (~1e-6 vs CPU) but slower than CPU; native GPU kernels produced wrong forces and blew up. Fixed the fallback list-rebuild frequency. Backups: branch `metal-backup-2026-09-08`, tag `metal-pre-merge-2026-09-08`.
-- Stopped at: native kernel needs a real port.
+- Merged master (4 conflicts), Metal toolchain, all binaries built. CPU-fallback path correct (~1e-6) but slow; native kernels broken. Fixed fallback list frequency. Backups: branch `metal-backup-2026-09-08`, tag `metal-pre-merge-2026-09-08`.
 
 ### 2026-09-09
-- Started: stabilize the native GPU DNA kernel.
-- Progress: rewrote `src/Metal/Shaders/dna_kernels.metal` as a faithful port of `src/CUDA/Interactions/CUDA_DNA.cuh` — added hydrogen bonding, cross stacking, coaxial stacking (oxDNA1+2), Debye-Hückel, the max-backbone-force FENE cap, correct `_f1D`/`_f2D`/`_f4`/`_f4D`, and the body-frame torque transform. Native DNA/DNA2 now match the CPU backend to ~1e-6 / ~1e-4 and the 32k example runs stably. Added `MetalBaseList::lists_are_old()` (host displacement check) so the native path stops rebuilding Verlet lists every step. Then batched the entire MD step (first step → zero → forces → second step → thermostat) into one command buffer / one host sync: 32k×2000 steps wall time 30.6 s (CPU backend) → 3.3 s (Metal native), ~9×. Commits `77bc1ee1`, `580660ad` pushed to `origin/metal`.
-- Next: user wants three precision tiers (`float`, `hardmixed` = GPU-float/CPU-double, `mixed` = df64 two-float), OpenMP for CPU MD/MC, full energy validation + speed-up report, docs. Metal has NO GPU double (`double` is a compile error) — `mixed` must be double-float emulation.
-- Stopped at: about to start Phase A (precision-mode scaffolding).
+- Rewrote `dna_kernels.metal` as a faithful `CUDA_DNA.cuh` port (HB, cross/coax stacking, Debye-Hückel, FENE cap, body-frame torque). Native DNA/DNA2 match the CPU backend. `lists_are_old()` skin check. Batched the MD step into one GPU submission. Commits `77bc1ee1`, `580660ad`.
+- Implemented the three precision tiers. `mixed` = double-float (df64: TwoSum, TwoProd-FMA, Dekker add — `src/Metal/Shaders/df64.h`) with df64 velocity-Verlet kernels; keeps float mirror buffers for the force kernels / lists / thermostats. `hardmixed` = GPU float forces + CPU native-double integration over the shared unified-memory buffers, OpenMP-parallel. `-DMETAL_DOUBLE` is now a configure error. `-DUSE_OPENMP` option added (libomp on macOS). Validated all tiers (NVE 1e-6/2e-6/4e-6; thermostat holds T). Commit `9d8ac5f9` pushed.
+- **CPU-backend OpenMP investigation (#11):** the MD force loop is ~95% of CPU MD time, so only parallelizing it matters. Two blockers:
+  1. `BaseInteraction::_computed_r` (and `_is_infinite`) are **mutable instance members** used as scratch between `pair_interaction_*` and its helpers — two threads sharing one interaction object race on them. Fix = make them `thread_local` / pass `r` explicitly.
+  2. `BaseList::get_neigh_list(p)` is a **half list** (`q->index < p->index`) and `pair_interaction_nonbonded` applies Newton's 3rd law (writes `p->force` **and** `q->force`) — parallelizing over `p` races on `q->force`. Fix = full neighbour list + one-sided force output (API addition), per-thread force buffers + reduction, or cell colouring.
+  Neither is a small change; oxDNA upstream has never OpenMP'd the core (it uses MPI for parallel tempering and CUDA for the GPU). MC is a sequential Markov chain — "multicore MC" means independent replicas / parallel tempering, which `PT_VMMC_CPUBackend` already provides via MPI.
+  Recommendation: on Apple Silicon use the Metal `float`/`mixed` tiers (10-12x) rather than CPU threads. If CPU OpenMP is still wanted, it is a dedicated task: thread-local interaction state + per-thread force accumulation.
+- Stopped at: writing documentation (#13).
