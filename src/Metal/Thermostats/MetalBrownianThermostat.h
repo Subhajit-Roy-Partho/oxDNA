@@ -17,7 +17,8 @@ class MetalBrownianThermostat : public MetalBaseThermostat, public BrownianTherm
 protected:
     id<MTLBuffer> _d_rng_state;
     id<MTLComputePipelineState> _thermostat_pso;
-    
+    id<MTLCommandQueue> _own_queue = nil;
+
     void _init_rng(int N);
 
 public:
@@ -28,7 +29,9 @@ public:
     void init() override;
 	void metal_init(int N, id<MTLDevice> device, id<MTLLibrary> library) override;
 	void apply(id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) override;
-    
+	void encode_apply(id<MTLCommandBuffer> command_buffer, id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) override;
+
+
     // CPU apply from BaseThermostat - empty for Metal
     void apply(std::vector<BaseParticle *> &particles, llint curr_step) override {}
 };

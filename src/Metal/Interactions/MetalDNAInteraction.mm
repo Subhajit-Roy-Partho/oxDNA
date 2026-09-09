@@ -257,25 +257,32 @@ void MetalDNAInteraction::compute_forces(MetalBaseList *lists, id<MTLBuffer> d_p
     }
 
     @autoreleasepool {
-        // MD_MetalBackend manages queue. But here we create new buffer?
-        // Ideally we should pass queue or encoder. 
-        // But MetalBaseInteraction doesn't take queue.
-        // We will create a command buffer from the device's default queue (inefficient but works for now if device has queue)
-        // actually MD_MetalBackend has the queue.
-        // I should probably fix this design later.
-        // For now, I'll create a queue in `MetalDNAInteraction::metal_init` logic if not present, or use `_device` to make one.
-        // Assuming `process_dna_force_kernel` does the work.
-        
-        // Actually, `MD_MetalBackend.mm` line 178 calls `metal_init`.
-        // I should stick to existing pattern in `MetalDNAInteraction.mm`.
-        // It creates a `_command_queue`?
-        // Let's check `MetalDNAInteraction.mm` init.
-        
-        this->process_dna_force_kernel(lists, d_poss, d_orientations, d_forces, d_torques, d_bonds, d_box, d_energies);
+        if(!_command_queue) {
+            _command_queue = [_device newCommandQueue];
+        }
+        id<MTLCommandBuffer> commandBuffer = [_command_queue commandBuffer];
+        this->process_dna_force_kernel(commandBuffer, lists, d_poss, d_orientations, d_forces, d_torques, d_bonds, d_box, d_energies);
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
     }
 }
 
-void MetalDNAInteraction::process_dna_force_kernel(MetalBaseList *list,
+void MetalDNAInteraction::encode_forces(id<MTLCommandBuffer> command_buffer, MetalBaseList *lists, id<MTLBuffer> d_poss,
+                                        id<MTLBuffer> d_orientations, id<MTLBuffer> forces, id<MTLBuffer> torques,
+                                        id<MTLBuffer> bonds, id<MTLBuffer> metal_box, id<MTLBuffer> energies) {
+    if(_use_cpu_fallback) {
+        MetalCPUForceFallback::compute(_N, d_poss, d_orientations, forces, torques, energies);
+        return;
+    }
+    if(!_d_is_strand_end) _init_strand_ends(bonds);
+    if(!_dna_forces_pso) {
+        throw oxDNAException("MetalDNAInteraction non-bonded pipeline not initialized");
+    }
+    this->process_dna_force_kernel(command_buffer, lists, d_poss, d_orientations, forces, torques, bonds, metal_box, energies);
+}
+
+void MetalDNAInteraction::process_dna_force_kernel(id<MTLCommandBuffer> commandBuffer,
+                                                   MetalBaseList *list,
                                                    id<MTLBuffer> poss,
                                                    id<MTLBuffer> orientations,
                                                    id<MTLBuffer> forces,
@@ -284,11 +291,6 @@ void MetalDNAInteraction::process_dna_force_kernel(MetalBaseList *list,
                                                    id<MTLBuffer> metal_box,
                                                    id<MTLBuffer> energies) {
     @autoreleasepool {
-        if(!_command_queue) {
-            _command_queue = [_device newCommandQueue];
-        }
-        
-        id<MTLCommandBuffer> commandBuffer = [_command_queue commandBuffer];
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
 
         [encoder setComputePipelineState:_dna_forces_pso];
@@ -316,8 +318,5 @@ void MetalDNAInteraction::process_dna_force_kernel(MetalBaseList *list,
 
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
         [encoder endEncoding];
-
-        [commandBuffer commit];
-        [commandBuffer waitUntilCompleted];
     }
 }

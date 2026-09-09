@@ -51,11 +51,22 @@ public:
 	virtual void metal_init(int N, id<MTLDevice> device, id<MTLLibrary> library);
 	virtual m_number get_metal_rcut() = 0;
 
-	virtual void compute_forces(MetalBaseList *lists, id<MTLBuffer> d_poss, id<MTLBuffer> d_orientations, id<MTLBuffer> forces, 
-                       id<MTLBuffer> torques, 
+	virtual void compute_forces(MetalBaseList *lists, id<MTLBuffer> d_poss, id<MTLBuffer> d_orientations, id<MTLBuffer> forces,
+                       id<MTLBuffer> torques,
                        id<MTLBuffer> bonds,
                        id<MTLBuffer> metal_box,
                        id<MTLBuffer> energies=nil) = 0;
+
+	// Encode the force computation into an existing command buffer without
+	// committing or waiting on it. Lets the backend batch a whole MD step into
+	// a single GPU submission. The default falls back to the self-contained
+	// compute_forces().
+	virtual void encode_forces(id<MTLCommandBuffer> command_buffer, MetalBaseList *lists, id<MTLBuffer> d_poss,
+	                           id<MTLBuffer> d_orientations, id<MTLBuffer> forces, id<MTLBuffer> torques,
+	                           id<MTLBuffer> bonds, id<MTLBuffer> metal_box, id<MTLBuffer> energies = nil) {
+		(void) command_buffer;
+		compute_forces(lists, d_poss, d_orientations, forces, torques, bonds, metal_box, energies);
+	}
 
 	bool use_cpu_fallback() const {
 		return _use_cpu_fallback;

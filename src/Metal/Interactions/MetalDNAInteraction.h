@@ -50,7 +50,7 @@ protected:
     id<MTLCommandQueue> _command_queue;
     
     void _init_strand_ends(id<MTLBuffer> d_bonds);
-    void process_dna_force_kernel(MetalBaseList *list, id<MTLBuffer> poss, id<MTLBuffer> orientations, id<MTLBuffer> forces, id<MTLBuffer> torques, id<MTLBuffer> bonds, id<MTLBuffer> metal_box, id<MTLBuffer> energies);
+    void process_dna_force_kernel(id<MTLCommandBuffer> command_buffer, MetalBaseList *list, id<MTLBuffer> poss, id<MTLBuffer> orientations, id<MTLBuffer> forces, id<MTLBuffer> torques, id<MTLBuffer> bonds, id<MTLBuffer> metal_box, id<MTLBuffer> energies);
     
 public:
 	MetalDNAInteraction();
@@ -69,6 +69,10 @@ public:
                                   id<MTLBuffer> bonds,
                                   id<MTLBuffer> metal_box,
                                   id<MTLBuffer> energies) override;
+
+	void encode_forces(id<MTLCommandBuffer> command_buffer, MetalBaseList *lists, id<MTLBuffer> d_poss,
+	                   id<MTLBuffer> d_orientations, id<MTLBuffer> forces, id<MTLBuffer> torques,
+	                   id<MTLBuffer> bonds, id<MTLBuffer> metal_box, id<MTLBuffer> energies = nil) override;
 
 protected:
     void _on_T_update() override;

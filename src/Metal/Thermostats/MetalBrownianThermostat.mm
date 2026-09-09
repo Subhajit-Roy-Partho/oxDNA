@@ -54,13 +54,19 @@ void MetalBrownianThermostat::_init_rng(int N) {
 }
 
 void MetalBrownianThermostat::apply(id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) {
+    if(!_own_queue) _own_queue = [_device newCommandQueue];
+    id<MTLCommandBuffer> commandBuffer = [_own_queue commandBuffer];
+    encode_apply(commandBuffer, d_velocities, d_angular_velocities, d_orientations, d_forces, d_torques, d_poss);
+    [commandBuffer commit];
+    [commandBuffer waitUntilCompleted];
+}
+
+void MetalBrownianThermostat::encode_apply(id<MTLCommandBuffer> commandBuffer, id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) {
     llint step = CONFIG_INFO->curr_step;
     if((step % this->_newtonian_steps) != 0) return;
-    
-    id<MTLCommandQueue> queue = [_device newCommandQueue];
-    id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+
     id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
-    
+
     [computeEncoder setComputePipelineState:_thermostat_pso];
     [computeEncoder setBuffer:_d_rng_state offset:0 atIndex:0];
     [computeEncoder setBuffer:d_velocities offset:0 atIndex:1];
@@ -84,6 +90,4 @@ void MetalBrownianThermostat::apply(id<MTLBuffer> d_velocities, id<MTLBuffer> d_
     [computeEncoder dispatchThreadgroups:MTLSizeMake(blocks, 1, 1) threadsPerThreadgroup:MTLSizeMake(tpb, 1, 1)];
     
     [computeEncoder endEncoding];
-    [commandBuffer commit];
-    [commandBuffer waitUntilCompleted];
 }

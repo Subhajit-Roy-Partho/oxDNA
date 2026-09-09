@@ -96,6 +96,7 @@ protected:
     virtual void _rescale_positions(m_number4 new_Ls, m_number4 old_Ls);
 
     virtual void _first_step();
+    virtual void _encode_first_step(id<MTLCommandBuffer> command_buffer);
     virtual void _apply_barostat();
     virtual void _forces_second_step();
     virtual void _set_external_forces();
@@ -108,6 +109,8 @@ protected:
     virtual void _update_host_buffers_from_particles();
     virtual void _update_particles_from_host_buffers();
     virtual void _zero_force_and_torque_buffers();
+    virtual void _encode_zero_force_and_torque(id<MTLCommandBuffer> command_buffer);
+    virtual void _encode_second_step(id<MTLCommandBuffer> command_buffer);
 
 public:
     MD_MetalBackend();

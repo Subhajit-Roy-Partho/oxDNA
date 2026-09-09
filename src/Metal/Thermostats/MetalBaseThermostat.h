@@ -32,6 +32,13 @@ public:
     
     // Metal-specific apply
     virtual void apply(id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) = 0;
+
+    // Encode the thermostat into an existing command buffer without committing
+    // or waiting. The default falls back to the self-contained apply().
+    virtual void encode_apply(id<MTLCommandBuffer> command_buffer, id<MTLBuffer> d_velocities, id<MTLBuffer> d_angular_velocities, id<MTLBuffer> d_orientations, id<MTLBuffer> d_forces, id<MTLBuffer> d_torques, id<MTLBuffer> d_poss) {
+        (void) command_buffer;
+        apply(d_velocities, d_angular_velocities, d_orientations, d_forces, d_torques, d_poss);
+    }
 };
 
 #endif /* METALBASETHERMOSTAT_H_ */

@@ -383,6 +383,30 @@ void MD_MetalBackend::_gpu_to_host() {
     _update_particles_from_host_buffers();
 }
 
+void MD_MetalBackend::_encode_first_step(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+
+    [encoder setComputePipelineState:_first_step_pipeline];
+    [encoder setBuffer:_d_poss offset:0 atIndex:0];
+    [encoder setBuffer:_d_orientations offset:0 atIndex:1];
+    [encoder setBuffer:_d_vels offset:0 atIndex:2];
+    [encoder setBuffer:_d_Ls offset:0 atIndex:3];
+    [encoder setBuffer:_d_forces offset:0 atIndex:4];
+    [encoder setBuffer:_d_torques offset:0 atIndex:5];
+    [encoder setBuffer:_d_metal_box offset:0 atIndex:6];
+
+    m_number dt = this->_dt;
+    m_number dt_half = dt * (m_number) 0.5f;
+    int N = _N;
+    [encoder setBytes:&dt length:sizeof(m_number) atIndex:7];
+    [encoder setBytes:&dt_half length:sizeof(m_number) atIndex:8];
+    [encoder setBytes:&N length:sizeof(int) atIndex:9];
+
+    [encoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [encoder endEncoding];
+}
+
 void MD_MetalBackend::_first_step() {
     @autoreleasepool {
         id<MTLCommandBuffer> commandBuffer = [_command_queue commandBuffer];
@@ -412,6 +436,40 @@ void MD_MetalBackend::_first_step() {
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
     }
+}
+
+void MD_MetalBackend::_encode_zero_force_and_torque(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> zeroForcesEncoder = [commandBuffer computeCommandEncoder];
+    [zeroForcesEncoder setComputePipelineState:_zero_forces_pipeline];
+    [zeroForcesEncoder setBuffer:_d_forces offset:0 atIndex:0];
+    [zeroForcesEncoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+                   threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [zeroForcesEncoder endEncoding];
+
+    id<MTLComputeCommandEncoder> zeroTorquesEncoder = [commandBuffer computeCommandEncoder];
+    [zeroTorquesEncoder setComputePipelineState:_zero_torques_pipeline];
+    [zeroTorquesEncoder setBuffer:_d_torques offset:0 atIndex:0];
+    [zeroTorquesEncoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+                    threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [zeroTorquesEncoder endEncoding];
+}
+
+void MD_MetalBackend::_encode_second_step(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+    [encoder setComputePipelineState:_second_step_pipeline];
+    [encoder setBuffer:_d_vels offset:0 atIndex:0];
+    [encoder setBuffer:_d_Ls offset:0 atIndex:1];
+    [encoder setBuffer:_d_forces offset:0 atIndex:2];
+    [encoder setBuffer:_d_torques offset:0 atIndex:3];
+
+    m_number dt_half = this->_dt * (m_number) 0.5f;
+    int N = _N;
+    [encoder setBytes:&dt_half length:sizeof(m_number) atIndex:4];
+    [encoder setBytes:&N length:sizeof(int) atIndex:5];
+
+    [encoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [encoder endEncoding];
 }
 
 void MD_MetalBackend::_zero_force_and_torque_buffers() {
@@ -578,25 +636,41 @@ void MD_MetalBackend::sim_step() {
         _timer_thermostat->pause();
     }
     else {
-        _timer_first_step->resume();
-        _first_step();
-        _timer_first_step->pause();
+        // The whole step (first half-kick -> zero buffers -> forces -> second
+        // half-kick -> thermostat) is encoded into a single command buffer with
+        // one host sync, so per-step cost is GPU-bound rather than dominated by
+        // command-buffer round-trip latency.
+        _timer_forces->resume();
+        @autoreleasepool {
+            id<MTLCommandBuffer> cb = [_command_queue commandBuffer];
 
+            _encode_first_step(cb);
+            _encode_zero_force_and_torque(cb);
+
+            _metal_interaction->encode_forces(cb, _metal_list, _d_poss, _d_orientations,
+                                              _d_forces, _d_torques, _d_bonds, _d_metal_box, _d_energies);
+
+            _encode_second_step(cb);
+
+            if(_metal_thermostat != nullptr) {
+                _metal_thermostat->encode_apply(cb, _d_vels, _d_Ls, _d_orientations,
+                                                _d_forces, _d_torques, _d_poss);
+            }
+
+            [cb commit];
+            [cb waitUntilCompleted];
+        }
+        _timer_forces->pause();
+
+        // Rebuild the Verlet lists for the *next* step if any particle has now
+        // drifted past the skin. The skin is sized to tolerate this one-step lag,
+        // exactly as on the CUDA backend (are_lists_old flag).
         _timer_lists->resume();
         if(_metal_list->lists_are_old(_d_poss, _d_list_poss)) {
             _metal_list->update(_d_poss, _d_list_poss, _d_bonds);
             _N_updates++;
         }
         _timer_lists->pause();
-
-        _timer_forces->resume();
-        _zero_force_and_torque_buffers();
-        _forces_second_step();
-        _timer_forces->pause();
-
-        _timer_thermostat->resume();
-        _thermalize();
-        _timer_thermostat->pause();
     }
 
     _mytimer->pause();
