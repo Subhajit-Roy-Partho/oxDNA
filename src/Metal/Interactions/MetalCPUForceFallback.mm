@@ -94,7 +94,17 @@ void MetalCPUForceFallback::compute(int N,
 		p->set_initial_forces(cfg->curr_step, cfg->box);
 	}
 
-	lists->global_update(true);
+	// Mirror the CPU MD backend: refresh the cell lists incrementally and only
+	// rebuild the (expensive) Verlet neighbour lists when a particle has moved
+	// farther than the Verlet skin. Previously this unconditionally forced a
+	// full rebuild on every step, which made the fallback path slower than the
+	// plain CPU backend.
+	for(auto p : particles) {
+		lists->single_update(p);
+	}
+	if(!lists->is_updated()) {
+		lists->global_update();
+	}
 	interaction->begin_energy_and_force_computation();
 
 	for(auto p : particles) {
