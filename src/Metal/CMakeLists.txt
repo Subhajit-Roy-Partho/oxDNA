@@ -101,11 +101,9 @@ IF(APPLE)
         PARENT_SCOPE
     )
 
-    # Metal compilation flags
-    IF(METAL_DOUBLE_PRECISION)
-        ADD_DEFINITIONS(-DMETAL_DOUBLE_PRECISION)
-        SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMETAL_DOUBLE_PRECISION")
-    ENDIF()
+    # Note: there is intentionally no double-precision switch here. Apple GPUs
+    # have no hardware double precision, so shader storage is always float32.
+    # Accuracy tiers are selected at run time with `backend_precision`.
 
     # Include directories
     INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})

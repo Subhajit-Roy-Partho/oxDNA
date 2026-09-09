@@ -39,17 +39,21 @@
 /// Dot product macro for float3 vectors
 #define METAL_DOT(a, b) (dot(a, b))
 
+// Host-side scalar/vector types for the Metal backend.
+//
+// These are ALWAYS single precision: Apple GPUs have no hardware double
+// precision (`double` is a compile error in Metal Shading Language), so the
+// shader-side storage is float32 and the host mirrors must match it exactly.
+// Higher accuracy is selected at run time with the `backend_precision` input
+// key (float | mixed | hardmixed, see MD_MetalBackend.h), never at compile
+// time. The legacy METAL_DOUBLE_PRECISION switch is therefore rejected.
 #ifdef METAL_DOUBLE_PRECISION
-using m_number = double;
-using m_number3 = simd_double3;
-using m_number4 = simd_double4;
-using m_quat = simd_double4;
-#else
+#error "METAL_DOUBLE_PRECISION is not supported: Apple GPUs have no hardware double precision. Use backend_precision = 'mixed' (double-float emulation) or 'hardmixed' (CPU double integration) instead."
+#endif
 using m_number = float;
 using m_number3 = simd_float3;
 using m_number4 = simd_float4;
 using m_quat = simd_float4;
-#endif
 
 /**
  * @brief Metal kernel configuration structure

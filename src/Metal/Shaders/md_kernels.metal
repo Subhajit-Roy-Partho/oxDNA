@@ -7,6 +7,7 @@
 
 #include <metal_stdlib>
 #include "common.metal"
+#include "df64.h"
 using namespace metal;
 
 /**
@@ -255,4 +256,179 @@ kernel void reduce_sum_m_number4(
     if(tid == 0) {
         output[0] = shared[0];
     }
+}
+
+// ============================================================================
+// Mixed-precision (double-float, df64) velocity-Verlet integration.
+//
+// `mixed` keeps positions, velocities and angular momenta as df64 pairs
+// (hi/lo float4 buffers) while forces/torques stay float32 — the Metal
+// analogue of the CUDA mixed backend, which uses hardware double for the
+// same quantities. The float mirror buffers (positions/velocities/momenta)
+// are kept in sync every step: force kernels, Verlet-list checks and
+// thermostats all read the mirrors. Orientations stay float32 quaternions
+// (renormalized every step, exactly as in the float path).
+// ============================================================================
+
+struct df64_4 {
+    float4 hi;
+    float4 lo;
+};
+
+inline df64_4 df4_from_f4(float4 a) {
+    df64_4 r;
+    r.hi = a;
+    r.lo = float4(0.0f);
+    return r;
+}
+
+inline float4 df4_to_f4(df64_4 a) {
+    return a.hi + a.lo;
+}
+
+inline df64_4 df4_add_df4(df64_4 a, df64_4 b) {
+    df64_4 r;
+    df64 cx = df_add_df(df64(a.hi.x, a.lo.x), df64(b.hi.x, b.lo.x));
+    df64 cy = df_add_df(df64(a.hi.y, a.lo.y), df64(b.hi.y, b.lo.y));
+    df64 cz = df_add_df(df64(a.hi.z, a.lo.z), df64(b.hi.z, b.lo.z));
+    r.hi = float4(cx.hi, cy.hi, cz.hi, a.hi.w);
+    r.lo = float4(cx.lo, cy.lo, cz.lo, 0.0f);
+    return r;
+}
+
+inline df64_4 df4_mul_f(df64_4 a, float b) {
+    df64_4 r;
+    df64 cx = df_mul_f(df64(a.hi.x, a.lo.x), b);
+    df64 cy = df_mul_f(df64(a.hi.y, a.lo.y), b);
+    df64 cz = df_mul_f(df64(a.hi.z, a.lo.z), b);
+    r.hi = float4(cx.hi, cy.hi, cz.hi, a.hi.w);
+    r.lo = float4(cx.lo, cy.lo, cz.lo, 0.0f);
+    return r;
+}
+
+/**
+ * @brief First half of velocity Verlet in df64: v += F*dt/2, r += v*dt.
+ */
+kernel void first_step_mixed(
+    device float4 *poss [[buffer(0)]],
+    device float4 *orientations [[buffer(1)]],
+    device float4 *vels_mir [[buffer(2)]],
+    device float4 *ls_mir [[buffer(3)]],
+    device float4 *forces [[buffer(4)]],
+    device float4 *torques [[buffer(5)]],
+    device float4 *poss_hi [[buffer(6)]],
+    device float4 *poss_lo [[buffer(7)]],
+    device float4 *vels_hi [[buffer(8)]],
+    device float4 *vels_lo [[buffer(9)]],
+    device float4 *ls_hi [[buffer(10)]],
+    device float4 *ls_lo [[buffer(11)]],
+    constant float &dt [[buffer(12)]],
+    constant float &dt_half [[buffer(13)]],
+    constant int &N [[buffer(14)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if((int) gid >= N) {
+        return;
+    }
+
+    // v += F * dt/2 in double-float (exact product via TwoProd+FMA)
+    df64_4 v;
+    v.hi = vels_hi[gid];
+    v.lo = vels_lo[gid];
+    df64_4 dv = df4_mul_f(df4_from_f4(forces[gid]), dt_half);
+    v = df4_add_df4(v, dv);
+    vels_hi[gid] = v.hi;
+    vels_lo[gid] = v.lo;
+    float4 vf = df4_to_f4(v);
+    vels_mir[gid] = float4(vf.x, vf.y, vf.z, 0.0f);
+
+    // r += v * dt in double-float
+    df64_4 r;
+    r.hi = poss_hi[gid];
+    r.lo = poss_lo[gid];
+    r = df4_add_df4(r, df4_mul_f(v, dt));
+    poss_hi[gid] = r.hi;
+    poss_lo[gid] = r.lo;
+    float4 rf = df4_to_f4(r);
+    poss[gid] = float4(rf.x, rf.y, rf.z, poss[gid].w);
+
+    // L += T * dt/2 in double-float
+    df64_4 L;
+    L.hi = ls_hi[gid];
+    L.lo = ls_lo[gid];
+    df64_4 dL = df4_mul_f(df4_from_f4(torques[gid]), dt_half);
+    L = df4_add_df4(L, dL);
+    ls_hi[gid] = L.hi;
+    ls_lo[gid] = L.lo;
+    float4 Lf = df4_to_f4(L);
+    ls_mir[gid] = float4(Lf.x, Lf.y, Lf.z, 0.0f);
+
+    orientations[gid] = update_orientation_from_L(Lf, orientations[gid], dt);
+}
+
+/**
+ * @brief Second half of velocity Verlet in df64: v += F*dt/2.
+ */
+kernel void second_step_mixed(
+    device float4 *vels_mir [[buffer(0)]],
+    device float4 *ls_mir [[buffer(1)]],
+    device float4 *forces [[buffer(2)]],
+    device float4 *torques [[buffer(3)]],
+    device float4 *vels_hi [[buffer(4)]],
+    device float4 *vels_lo [[buffer(5)]],
+    device float4 *ls_hi [[buffer(6)]],
+    device float4 *ls_lo [[buffer(7)]],
+    constant float &dt_half [[buffer(8)]],
+    constant int &N [[buffer(9)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if((int) gid >= N) {
+        return;
+    }
+
+    df64_4 v;
+    v.hi = vels_hi[gid];
+    v.lo = vels_lo[gid];
+    v = df4_add_df4(v, df4_mul_f(df4_from_f4(forces[gid]), dt_half));
+    vels_hi[gid] = v.hi;
+    vels_lo[gid] = v.lo;
+    float4 vf = df4_to_f4(v);
+    vels_mir[gid] = float4(vf.x, vf.y, vf.z,
+                           (vf.x * vf.x + vf.y * vf.y + vf.z * vf.z) * 0.5f);
+
+    df64_4 L;
+    L.hi = ls_hi[gid];
+    L.lo = ls_lo[gid];
+    L = df4_add_df4(L, df4_mul_f(df4_from_f4(torques[gid]), dt_half));
+    ls_hi[gid] = L.hi;
+    ls_lo[gid] = L.lo;
+    float4 Lf = df4_to_f4(L);
+    ls_mir[gid] = float4(Lf.x, Lf.y, Lf.z,
+                         (Lf.x * Lf.x + Lf.y * Lf.y + Lf.z * Lf.z) * 0.5f);
+}
+
+/**
+ * @brief Re-split the float velocity mirrors into df64 after the GPU
+ * thermostat has rescaled them (hi = mirror, lo = 0).
+ */
+kernel void mixed_sync_df_vels(
+    device float4 *vels_mir [[buffer(0)]],
+    device float4 *ls_mir [[buffer(1)]],
+    device float4 *vels_hi [[buffer(2)]],
+    device float4 *vels_lo [[buffer(3)]],
+    device float4 *ls_hi [[buffer(4)]],
+    device float4 *ls_lo [[buffer(5)]],
+    constant int &N [[buffer(6)]],
+    uint gid [[thread_position_in_grid]])
+{
+    if((int) gid >= N) {
+        return;
+    }
+
+    float4 v = vels_mir[gid];
+    vels_hi[gid] = float4(v.x, v.y, v.z, 0.0f);
+    vels_lo[gid] = float4(0.0f);
+    float4 L = ls_mir[gid];
+    ls_hi[gid] = float4(L.x, L.y, L.z, 0.0f);
+    ls_lo[gid] = float4(0.0f);
 }

@@ -19,6 +19,29 @@
 #include "../Thermostats/MetalBaseThermostat.h"
 
 /**
+ * @brief Numerical precision strategy for the Metal MD backend.
+ *
+ * Apple GPUs have no hardware double precision (`double` is a compile error in
+ * Metal Shading Language), so the CUDA double/mixed kernels cannot be ported
+ * directly. The tiers below are the achievable analogues:
+ *
+ *  - METAL_PREC_FLOAT     : everything in float32 on the GPU. Fastest.
+ *  - METAL_PREC_MIXED     : GPU float force evaluation, but positions and the
+ *                           velocity-Verlet integration use double-float (df64,
+ *                           a pair of float32) arithmetic in the shader. Nearly
+ *                           float speed, drift-resistant.
+ *  - METAL_PREC_HARDMIXED : GPU float force evaluation, the velocity-Verlet
+ *                           integration runs on the CPU in native double over
+ *                           the shared (unified-memory) buffers, optionally
+ *                           OpenMP-parallel. Most accurate; a per-step CPU pass.
+ */
+enum MetalPrecision {
+    METAL_PREC_FLOAT = 0,
+    METAL_PREC_MIXED,
+    METAL_PREC_HARDMIXED
+};
+
+/**
  * @brief Manages a MD simulation on Apple GPU with Metal
  *
  * This class implements molecular dynamics simulation using the Metal API
@@ -29,6 +52,7 @@ protected:
     bool _use_edge;
     bool _any_rigid_body;
     bool _avoid_cpu_calculations;
+    MetalPrecision _precision = METAL_PREC_FLOAT;
 
     /// Compute pipelines for different kernels
     id<MTLComputePipelineState> _first_step_pipeline;
@@ -38,12 +62,25 @@ protected:
     id<MTLComputePipelineState> _zero_torques_pipeline;
     id<MTLComputePipelineState> _update_angular_momenta_pipeline;
     id<MTLComputePipelineState> _update_orientations_pipeline;
+    // df64 (double-float) integration kernels for backend_precision = mixed
+    id<MTLComputePipelineState> _first_step_mixed_pipeline;
+    id<MTLComputePipelineState> _second_step_mixed_pipeline;
+    id<MTLComputePipelineState> _mixed_sync_vels_pipeline;
 
     /// Particle velocity and angular momentum buffers
     id<MTLBuffer> _d_vels;      // Linear velocities
     id<MTLBuffer> _d_Ls;        // Angular momenta
     id<MTLBuffer> _d_forces;    // Forces
     id<MTLBuffer> _d_torques;   // Torques
+    // df64 (double-float) hi/lo mirrors of positions/velocities/momenta,
+    // used by the `mixed` precision tier. _d_poss/_d_vels/_d_Ls remain the
+    // float mirrors read by force kernels, lists and thermostats.
+    id<MTLBuffer> _d_poss_hi;
+    id<MTLBuffer> _d_poss_lo;
+    id<MTLBuffer> _d_vels_hi;
+    id<MTLBuffer> _d_vels_lo;
+    id<MTLBuffer> _d_Ls_hi;
+    id<MTLBuffer> _d_Ls_lo;
 
     m_number4 *_h_vels;
     m_number4 *_h_Ls;
@@ -97,6 +134,10 @@ protected:
 
     virtual void _first_step();
     virtual void _encode_first_step(id<MTLCommandBuffer> command_buffer);
+    virtual void _encode_first_step_mixed(id<MTLCommandBuffer> command_buffer);
+    virtual void _encode_second_step_mixed(id<MTLCommandBuffer> command_buffer);
+    virtual void _encode_mixed_sync_vels(id<MTLCommandBuffer> command_buffer);
+    virtual void _split_mirrors_to_df();
     virtual void _apply_barostat();
     virtual void _forces_second_step();
     virtual void _set_external_forces();
@@ -111,6 +152,8 @@ protected:
     virtual void _zero_force_and_torque_buffers();
     virtual void _encode_zero_force_and_torque(id<MTLCommandBuffer> command_buffer);
     virtual void _encode_second_step(id<MTLCommandBuffer> command_buffer);
+    virtual void _sync_forces_torques_from_gpu();
+    virtual void _sync_vels_Ls_from_gpu();
 
 public:
     MD_MetalBackend();

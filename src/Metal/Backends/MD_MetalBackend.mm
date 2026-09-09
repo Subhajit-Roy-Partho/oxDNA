@@ -13,6 +13,10 @@
 
 #include <cmath>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace {
 
 inline m_quat _quat_from_orientation(const LR_matrix &o) {
@@ -101,10 +105,19 @@ MD_MetalBackend::MD_MetalBackend() :
     _zero_torques_pipeline(nil),
     _update_angular_momenta_pipeline(nil),
     _update_orientations_pipeline(nil),
+    _first_step_mixed_pipeline(nil),
+    _second_step_mixed_pipeline(nil),
+    _mixed_sync_vels_pipeline(nil),
     _d_vels(nil),
     _d_Ls(nil),
     _d_forces(nil),
     _d_torques(nil),
+    _d_poss_hi(nil),
+    _d_poss_lo(nil),
+    _d_vels_hi(nil),
+    _d_vels_lo(nil),
+    _d_Ls_hi(nil),
+    _d_Ls_lo(nil),
     _h_vels(nullptr),
     _h_Ls(nullptr),
     _h_forces(nullptr),
@@ -137,11 +150,20 @@ MD_MetalBackend::~MD_MetalBackend() {
     _zero_torques_pipeline = nil;
     _update_angular_momenta_pipeline = nil;
     _update_orientations_pipeline = nil;
+    _first_step_mixed_pipeline = nil;
+    _second_step_mixed_pipeline = nil;
+    _mixed_sync_vels_pipeline = nil;
 
     _d_vels = nil;
     _d_Ls = nil;
     _d_forces = nil;
     _d_torques = nil;
+    _d_poss_hi = nil;
+    _d_poss_lo = nil;
+    _d_vels_hi = nil;
+    _d_vels_lo = nil;
+    _d_Ls_hi = nil;
+    _d_Ls_lo = nil;
     _d_energies = nil;
 
     _d_particles_to_mols = nil;
@@ -171,6 +193,32 @@ void MD_MetalBackend::get_settings(input_file &inp) {
     getInputBool(&inp, "use_edge", &_use_edge, 0);
     getInputBool(&inp, "Metal_avoid_cpu_calculations", &_avoid_cpu_calculations, 0);
     getInputInt(&inp, "update_st_every", &_update_st_every, 0);
+
+    // Numerical precision tier. Apple GPUs have no hardware double, so
+    // backend_precision = double is rejected with a pointer to the analogues.
+    std::string prec;
+    if(getInputString(&inp, "backend_precision", prec, 0) == KEY_FOUND) {
+        if(prec == "float") {
+            _precision = METAL_PREC_FLOAT;
+        }
+        else if(prec == "mixed") {
+            _precision = METAL_PREC_MIXED;
+        }
+        else if(prec == "hardmixed") {
+            _precision = METAL_PREC_HARDMIXED;
+        }
+        else if(prec == "double") {
+            throw oxDNAException("backend_precision = double is not available for the Metal backend: "
+                                 "Apple GPUs have no hardware double precision. Use 'mixed' (double-float "
+                                 "emulation in the shader) or 'hardmixed' (CPU double integration) instead.");
+        }
+        else {
+            throw oxDNAException("Unknown backend_precision '%s' for the Metal backend "
+                                 "(expected float, mixed or hardmixed)", prec.c_str());
+        }
+    }
+    const char *prec_name[] = {"float", "mixed (double-float)", "hardmixed (CPU double integration)"};
+    OX_LOG(Logger::LOG_INFO, "Metal backend precision tier: %s", prec_name[_precision]);
 
     int print_energy_int = 0;
     if(getInputInt(&inp, "print_energy_every", &print_energy_int, 0) == KEY_FOUND) {
@@ -220,6 +268,14 @@ void MD_MetalBackend::init() {
         _d_forces = MetalUtils::allocate_buffer<m_number4>(_device, _N);
         _d_torques = MetalUtils::allocate_buffer<m_number4>(_device, _N);
         _d_energies = MetalUtils::allocate_buffer<float>(_device, _N * 10);
+        // df64 state for the mixed tier (allocated always: cheap, and keeps
+        // the encode paths branch-free at init time).
+        _d_poss_hi = MetalUtils::allocate_buffer<m_number4>(_device, _N);
+        _d_poss_lo = MetalUtils::allocate_buffer<m_number4>(_device, _N);
+        _d_vels_hi = MetalUtils::allocate_buffer<m_number4>(_device, _N);
+        _d_vels_lo = MetalUtils::allocate_buffer<m_number4>(_device, _N);
+        _d_Ls_hi = MetalUtils::allocate_buffer<m_number4>(_device, _N);
+        _d_Ls_lo = MetalUtils::allocate_buffer<m_number4>(_device, _N);
 
         _h_metal_box.set_Metal_from_CPU(this->_box.get());
         _d_metal_box = MetalUtils::allocate_buffer<MetalBox::BoxData>(_device, 1);
@@ -258,6 +314,11 @@ void MD_MetalBackend::init() {
 
         OX_LOG(Logger::LOG_INFO, "Metal MD Backend initialized with %d particles", _N);
         OX_LOG(Logger::LOG_INFO, "Allocated GPU memory: %.2f MB", MetalUtils::get_allocated_mem_mb());
+#ifdef _OPENMP
+        OX_LOG(Logger::LOG_INFO, "OpenMP CPU integration enabled with %d threads", omp_get_max_threads());
+#else
+        OX_LOG(Logger::LOG_INFO, "OpenMP not enabled: CPU integration loops run single-threaded (configure with -DUSE_OPENMP=ON)");
+#endif
     }
 }
 
@@ -292,6 +353,27 @@ void MD_MetalBackend::_create_compute_pipelines() {
         }
         _zero_torques_pipeline = [_device newComputePipelineStateWithFunction:zero_torques_func error:&error];
         METAL_CHECK_ERROR(_zero_torques_pipeline, [[error localizedDescription] UTF8String]);
+
+        id<MTLFunction> first_step_mixed_func = [_library newFunctionWithName:@"first_step_mixed"];
+        if(!first_step_mixed_func) {
+            throw oxDNAException("Failed to find first_step_mixed kernel function");
+        }
+        _first_step_mixed_pipeline = [_device newComputePipelineStateWithFunction:first_step_mixed_func error:&error];
+        METAL_CHECK_ERROR(_first_step_mixed_pipeline, [[error localizedDescription] UTF8String]);
+
+        id<MTLFunction> second_step_mixed_func = [_library newFunctionWithName:@"second_step_mixed"];
+        if(!second_step_mixed_func) {
+            throw oxDNAException("Failed to find second_step_mixed kernel function");
+        }
+        _second_step_mixed_pipeline = [_device newComputePipelineStateWithFunction:second_step_mixed_func error:&error];
+        METAL_CHECK_ERROR(_second_step_mixed_pipeline, [[error localizedDescription] UTF8String]);
+
+        id<MTLFunction> mixed_sync_vels_func = [_library newFunctionWithName:@"mixed_sync_df_vels"];
+        if(!mixed_sync_vels_func) {
+            throw oxDNAException("Failed to find mixed_sync_df_vels kernel function");
+        }
+        _mixed_sync_vels_pipeline = [_device newComputePipelineStateWithFunction:mixed_sync_vels_func error:&error];
+        METAL_CHECK_ERROR(_mixed_sync_vels_pipeline, [[error localizedDescription] UTF8String]);
     }
 }
 
@@ -299,7 +381,13 @@ void MD_MetalBackend::_init_metal_md_symbols() {
 }
 
 void MD_MetalBackend::_update_host_buffers_from_particles() {
-    _any_rigid_body = false;
+    // Per-particle packing; OpenMP-parallel when available. _any_rigid_body
+    // never changes during a run, but we recompute it here with a max
+    // reduction to keep the loop data-race free.
+    int any_rigid = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(max:any_rigid)
+#endif
     for(int i = 0; i < _N; i++) {
         BaseParticle *p = this->_particles[i];
 
@@ -326,12 +414,16 @@ void MD_MetalBackend::_update_host_buffers_from_particles() {
         _h_particles_to_mols[i] = p->strand_id;
 
         if(p->is_rigid_body()) {
-            _any_rigid_body = true;
+            any_rigid = 1;
         }
     }
+    _any_rigid_body = (any_rigid != 0);
 }
 
 void MD_MetalBackend::_update_particles_from_host_buffers() {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
     for(int i = 0; i < _N; i++) {
         BaseParticle *p = this->_particles[i];
 
@@ -366,6 +458,35 @@ void MD_MetalBackend::_host_to_gpu() {
 
     MetalUtils::copy_to_device<m_number4>(_d_vels, _h_vels, _N);
     MetalUtils::copy_to_device<m_number4>(_d_Ls, _h_Ls, _N);
+
+    if(_precision == METAL_PREC_MIXED) {
+        _split_mirrors_to_df();
+    }
+}
+
+void MD_MetalBackend::_split_mirrors_to_df() {
+    // (Re-)split the float mirrors into df64 state: hi = mirror, lo = 0.
+    // Buffers are shared (unified memory): plain host-side writes.
+    const m_number4 *poss = (const m_number4 *) _d_poss.contents;
+    const m_number4 *vels = (const m_number4 *) _d_vels.contents;
+    const m_number4 *ls = (const m_number4 *) _d_Ls.contents;
+    m_number4 *poss_hi = (m_number4 *) _d_poss_hi.contents;
+    m_number4 *poss_lo = (m_number4 *) _d_poss_lo.contents;
+    m_number4 *vels_hi = (m_number4 *) _d_vels_hi.contents;
+    m_number4 *vels_lo = (m_number4 *) _d_vels_lo.contents;
+    m_number4 *ls_hi = (m_number4 *) _d_Ls_hi.contents;
+    m_number4 *ls_lo = (m_number4 *) _d_Ls_lo.contents;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < _N; i++) {
+        poss_hi[i] = poss[i];
+        poss_lo[i] = m_number4{0, 0, 0, 0};
+        vels_hi[i] = vels[i];
+        vels_lo[i] = m_number4{0, 0, 0, 0};
+        ls_hi[i] = ls[i];
+        ls_lo[i] = m_number4{0, 0, 0, 0};
+    }
 }
 
 void MD_MetalBackend::_gpu_to_host() {
@@ -472,6 +593,77 @@ void MD_MetalBackend::_encode_second_step(id<MTLCommandBuffer> commandBuffer) {
     [encoder endEncoding];
 }
 
+void MD_MetalBackend::_encode_first_step_mixed(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+
+    [encoder setComputePipelineState:_first_step_mixed_pipeline];
+    [encoder setBuffer:_d_poss offset:0 atIndex:0];
+    [encoder setBuffer:_d_orientations offset:0 atIndex:1];
+    [encoder setBuffer:_d_vels offset:0 atIndex:2];
+    [encoder setBuffer:_d_Ls offset:0 atIndex:3];
+    [encoder setBuffer:_d_forces offset:0 atIndex:4];
+    [encoder setBuffer:_d_torques offset:0 atIndex:5];
+    [encoder setBuffer:_d_poss_hi offset:0 atIndex:6];
+    [encoder setBuffer:_d_poss_lo offset:0 atIndex:7];
+    [encoder setBuffer:_d_vels_hi offset:0 atIndex:8];
+    [encoder setBuffer:_d_vels_lo offset:0 atIndex:9];
+    [encoder setBuffer:_d_Ls_hi offset:0 atIndex:10];
+    [encoder setBuffer:_d_Ls_lo offset:0 atIndex:11];
+
+    float dt = (float) this->_dt;
+    float dt_half = dt * 0.5f;
+    int N = _N;
+    [encoder setBytes:&dt length:sizeof(float) atIndex:12];
+    [encoder setBytes:&dt_half length:sizeof(float) atIndex:13];
+    [encoder setBytes:&N length:sizeof(int) atIndex:14];
+
+    [encoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [encoder endEncoding];
+}
+
+void MD_MetalBackend::_encode_second_step_mixed(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+
+    [encoder setComputePipelineState:_second_step_mixed_pipeline];
+    [encoder setBuffer:_d_vels offset:0 atIndex:0];
+    [encoder setBuffer:_d_Ls offset:0 atIndex:1];
+    [encoder setBuffer:_d_forces offset:0 atIndex:2];
+    [encoder setBuffer:_d_torques offset:0 atIndex:3];
+    [encoder setBuffer:_d_vels_hi offset:0 atIndex:4];
+    [encoder setBuffer:_d_vels_lo offset:0 atIndex:5];
+    [encoder setBuffer:_d_Ls_hi offset:0 atIndex:6];
+    [encoder setBuffer:_d_Ls_lo offset:0 atIndex:7];
+
+    float dt_half = (float) this->_dt * 0.5f;
+    int N = _N;
+    [encoder setBytes:&dt_half length:sizeof(float) atIndex:8];
+    [encoder setBytes:&N length:sizeof(int) atIndex:9];
+
+    [encoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [encoder endEncoding];
+}
+
+void MD_MetalBackend::_encode_mixed_sync_vels(id<MTLCommandBuffer> commandBuffer) {
+    id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+
+    [encoder setComputePipelineState:_mixed_sync_vels_pipeline];
+    [encoder setBuffer:_d_vels offset:0 atIndex:0];
+    [encoder setBuffer:_d_Ls offset:0 atIndex:1];
+    [encoder setBuffer:_d_vels_hi offset:0 atIndex:2];
+    [encoder setBuffer:_d_vels_lo offset:0 atIndex:3];
+    [encoder setBuffer:_d_Ls_hi offset:0 atIndex:4];
+    [encoder setBuffer:_d_Ls_lo offset:0 atIndex:5];
+
+    int N = _N;
+    [encoder setBytes:&N length:sizeof(int) atIndex:6];
+
+    [encoder dispatchThreads:MTLSizeMake(_N, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(_particles_kernel_cfg.threads_per_threadgroup, 1, 1)];
+    [encoder endEncoding];
+}
+
 void MD_MetalBackend::_zero_force_and_torque_buffers() {
     @autoreleasepool {
         id<MTLCommandBuffer> commandBuffer = [_command_queue commandBuffer];
@@ -530,17 +722,65 @@ void MD_MetalBackend::_forces_second_step() {
     }
 }
 
+void MD_MetalBackend::_sync_forces_torques_from_gpu() {
+    // Shared-storage buffers: read the GPU-computed force/torque straight into
+    // the CPU particle objects (no copy). The native DNA kernel already returns
+    // the torque in the particle body frame, which is what the CPU integrator
+    // expects (p->L += p->torque * dt/2).
+    const m_number4 *f = (const m_number4 *) _d_forces.contents;
+    const m_number4 *t = (const m_number4 *) _d_torques.contents;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < _N; i++) {
+        BaseParticle *p = _particles[i];
+        p->force = LR_vector(f[i].x, f[i].y, f[i].z);
+        p->torque = LR_vector(t[i].x, t[i].y, t[i].z);
+    }
+}
+
+void MD_MetalBackend::_sync_vels_Ls_from_gpu() {
+    // Pull the GPU-side velocities/angular momenta (e.g. after the GPU
+    // thermostat has rescaled them) back into the CPU particle objects.
+    // Without this the next step's CPU -> GPU upload would wipe the
+    // thermostat's effect in the CPU-integration paths (CPU fallback and
+    // hardmixed).
+    const m_number4 *v = (const m_number4 *) _d_vels.contents;
+    const m_number4 *l = (const m_number4 *) _d_Ls.contents;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < _N; i++) {
+        BaseParticle *p = _particles[i];
+        p->vel = LR_vector(v[i].x, v[i].y, v[i].z);
+        p->L = LR_vector(l[i].x, l[i].y, l[i].z);
+    }
+}
+
 void MD_MetalBackend::sim_step() {
     _mytimer->resume();
 
-    if(_metal_interaction->use_cpu_fallback()) {
+    // The "CPU integration" path is used for the CPU force fallback and for the
+    // hardmixed precision tier (GPU float forces, CPU double velocity-Verlet).
+    const bool cpu_integration = _metal_interaction->use_cpu_fallback() || (_precision == METAL_PREC_HARDMIXED);
+    const bool gpu_forces_cpu_integration = cpu_integration && !_metal_interaction->use_cpu_fallback();
+
+    if(cpu_integration) {
         const number dt = _dt;
         const number dt_half = _dt * (number) 0.5;
 
         _timer_first_step->resume();
         _gpu_to_host();
 
-        for(auto p : _particles) {
+        // First half-kick + drift in native double on the CPU. Embarrassingly
+        // parallel over particles (OpenMP when available): each iteration only
+        // touches its own particle. Lees-Edwards uses step-local scalars.
+        const int n_part = (int) _particles.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(int i = 0; i < n_part; i++) {
+            BaseParticle *p = _particles[i];
             p->vel += p->force * dt_half;
             LR_vector dr = p->vel * dt;
             p->pos += dr;
@@ -606,7 +846,18 @@ void MD_MetalBackend::sim_step() {
         _timer_first_step->pause();
 
         _timer_lists->resume();
-        _N_updates++;
+        if(gpu_forces_cpu_integration) {
+            // GPU force kernel reads the GPU Verlet lists: rebuild them here when
+            // a particle has drifted past the skin. (The CPU fallback rebuilds
+            // the CPU-side ConfigInfo lists inside MetalCPUForceFallback.)
+            if(_metal_list->lists_are_old(_d_poss, _d_list_poss)) {
+                _metal_list->update(_d_poss, _d_list_poss, _d_bonds);
+                _N_updates++;
+            }
+        }
+        else {
+            _N_updates++;
+        }
         _timer_lists->pause();
 
         _timer_forces->resume();
@@ -620,7 +871,19 @@ void MD_MetalBackend::sim_step() {
                                            _d_metal_box,
                                            _d_energies);
 
-        for(auto p : _particles) {
+        // With GPU force evaluation the CPU particle objects still hold last
+        // step's force, so pull the freshly computed ones back before the
+        // second half-kick. (The CPU fallback writes p->force directly.)
+        if(gpu_forces_cpu_integration) {
+            _sync_forces_torques_from_gpu();
+        }
+
+        // Second half-kick in native double. Per-particle independent.
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(int i = 0; i < n_part; i++) {
+            BaseParticle *p = _particles[i];
             p->vel += p->force * dt_half;
             if(p->is_rigid_body()) {
                 p->L += p->torque * dt_half;
@@ -633,28 +896,53 @@ void MD_MetalBackend::sim_step() {
 
         _timer_thermostat->resume();
         _thermalize();
+        // The GPU thermostat rescaled _d_vels/_d_Ls behind the CPU's back:
+        // pull them into the particle objects so the next step's CPU -> GPU
+        // upload does not wipe the thermostat's effect.
+        if(_metal_thermostat != nullptr) {
+            _sync_vels_Ls_from_gpu();
+            _update_host_buffers_from_particles();
+        }
         _timer_thermostat->pause();
     }
     else {
         // The whole step (first half-kick -> zero buffers -> forces -> second
         // half-kick -> thermostat) is encoded into a single command buffer with
         // one host sync, so per-step cost is GPU-bound rather than dominated by
-        // command-buffer round-trip latency.
+        // command-buffer round-trip latency. backend_precision = mixed uses
+        // the df64 integration kernels over the hi/lo buffers instead.
+        const bool use_mixed = (_precision == METAL_PREC_MIXED);
         _timer_forces->resume();
         @autoreleasepool {
             id<MTLCommandBuffer> cb = [_command_queue commandBuffer];
 
-            _encode_first_step(cb);
+            if(use_mixed) {
+                _encode_first_step_mixed(cb);
+            }
+            else {
+                _encode_first_step(cb);
+            }
             _encode_zero_force_and_torque(cb);
 
             _metal_interaction->encode_forces(cb, _metal_list, _d_poss, _d_orientations,
                                               _d_forces, _d_torques, _d_bonds, _d_metal_box, _d_energies);
 
-            _encode_second_step(cb);
+            if(use_mixed) {
+                _encode_second_step_mixed(cb);
+            }
+            else {
+                _encode_second_step(cb);
+            }
 
             if(_metal_thermostat != nullptr) {
                 _metal_thermostat->encode_apply(cb, _d_vels, _d_Ls, _d_orientations,
                                                 _d_forces, _d_torques, _d_poss);
+                if(use_mixed) {
+                    // The thermostat rescaled the velocity mirrors: re-split
+                    // them into df64 so the next step integrates from the
+                    // thermostatted state.
+                    _encode_mixed_sync_vels(cb);
+                }
             }
 
             [cb commit];

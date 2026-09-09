@@ -9,16 +9,20 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Precision selection
-#ifdef METAL_DOUBLE_PRECISION
-typedef double m_number;
-typedef double3 m_number3;
-typedef double4 m_number4;
-#else
-typedef float m_number;
+// Precision selection.
+//
+// Apple GPUs have NO hardware double precision - `double` is a hard compile
+// error in Metal Shading Language - so shader storage is always float32. Higher
+// accuracy is provided at run time by the `backend_precision` input key:
+//   * mixed     -> double-float (df64) arithmetic for positions/integration
+//                  (see df64.metal)
+//   * hardmixed -> the velocity-Verlet integration runs on the CPU in native
+//                  double over the shared buffers
+// The old compile-time -DMETAL_DOUBLE / METAL_DOUBLE_PRECISION switch only ever
+// affected host-side types; it must never make the shader use `double`.
+typedef float  m_number;
 typedef float3 m_number3;
 typedef float4 m_number4;
-#endif
 
 /**
  * @brief Simulation box structure

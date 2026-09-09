@@ -101,3 +101,5 @@ trajectory.dat
 # Encoder/Decoder 
 utils/PostSimulationCompression/encode_trj
 utils/PostSimulationCompression/decode_trj
+build_metal_omp/
+build_metal_*/
