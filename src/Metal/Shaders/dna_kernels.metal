@@ -1,12 +1,181 @@
 /**
  * @file    dna_kernels.metal
- * @brief   Metal kernels for DNA interaction
+ * @brief   Metal kernels for the DNA/DNA2 interaction.
+ *
+ * This is a faithful port of the CUDA reference implementation in
+ *   src/CUDA/Interactions/CUDA_DNA.cuh
+ * (functions _excluded_volume, _f1..._f5, _bonded_excluded_volume,
+ *  _bonded_part and _particle_particle_DNA_interaction).
+ *
+ * Forces and torques only: the reported potential energy is recomputed on the
+ * CPU by the PotentialEnergy observable, so the kernel does not need to build
+ * an energy split. Torque is returned in the particle body frame, exactly like
+ * the CUDA kernel (final _vectors_transpose_c_number4_product step), because the
+ * Metal velocity-Verlet integrator consumes body-frame angular momenta.
  */
 
 #include "shader_utils.h"
 
 using namespace metal;
 
+// ---------------------------------------------------------------------------
+//  Model constants (mirrors src/model.h)
+// ---------------------------------------------------------------------------
+#define SQR(x)  ((x)*(x))
+#define CUB(x)  ((x)*(x)*(x))
+#define PI 3.141592653589793f
+
+#define POS_BACK       -0.4f
+#define POS_MM_BACK1   -0.3400f
+#define POS_MM_BACK2    0.3408f
+#define POS_STACK       0.34f
+#define POS_BASE        0.4f
+#define GAMMA           0.74f
+
+#define FENE_EPS         2.0f
+#define FENE_R0_OXDNA    0.7525f
+#define FENE_R0_OXDNA2   0.7564f
+#define FENE_DELTA       0.25f
+#define FENE_DELTA2      0.0625f
+
+#define EXCL_EPS  2.0f
+#define EXCL_S1 0.70f
+#define EXCL_S2 0.33f
+#define EXCL_S3 0.515f
+#define EXCL_S4 0.515f
+#define EXCL_R1 0.675f
+#define EXCL_R2 0.32f
+#define EXCL_R3 0.50f
+#define EXCL_R4 0.50f
+#define EXCL_B1 892.016223343f
+#define EXCL_B2 4119.70450017f
+#define EXCL_B3 1707.30627298f
+#define EXCL_B4 1707.30627298f
+#define EXCL_RC1 0.711879214356f
+#define EXCL_RC2 0.335388426126f
+#define EXCL_RC3 0.52329943261f
+#define EXCL_RC4 0.52329943261f
+
+#define HYDR_F1 0
+#define STCK_F1 1
+
+#define HYDR_RCLOW  0.276908f
+#define HYDR_RCHIGH 0.783775f
+
+#define HYDR_THETA1_A 1.5f
+#define HYDR_THETA1_B 4.16038f
+#define HYDR_THETA1_T0 0.f
+#define HYDR_THETA1_TS 0.7f
+#define HYDR_THETA1_TC 0.952381f
+#define HYDR_THETA2_A 1.5f
+#define HYDR_THETA2_B 4.16038f
+#define HYDR_THETA2_T0 0.f
+#define HYDR_THETA2_TS 0.7f
+#define HYDR_THETA2_TC 0.952381f
+#define HYDR_THETA3_A 1.5f
+#define HYDR_THETA3_B 4.16038f
+#define HYDR_THETA3_T0 0.f
+#define HYDR_THETA3_TS 0.7f
+#define HYDR_THETA3_TC 0.952381f
+#define HYDR_THETA4_A 0.46f
+#define HYDR_THETA4_B 0.133855f
+#define HYDR_THETA4_T0 PI
+#define HYDR_THETA4_TS 0.7f
+#define HYDR_THETA4_TC 3.10559f
+#define HYDR_THETA7_A 4.f
+#define HYDR_THETA7_B 17.0526f
+#define HYDR_THETA7_T0 (PI*0.5f)
+#define HYDR_THETA7_TS 0.45f
+#define HYDR_THETA7_TC 0.555556f
+#define HYDR_THETA8_A 4.f
+#define HYDR_THETA8_B 17.0526f
+#define HYDR_THETA8_T0 (PI*0.5f)
+#define HYDR_THETA8_TS 0.45f
+#define HYDR_THETA8_TC 0.555556f
+
+#define STCK_THETA4_A 1.3f
+#define STCK_THETA4_B 6.4381f
+#define STCK_THETA4_T0 0.f
+#define STCK_THETA4_TS 0.8f
+#define STCK_THETA4_TC 0.961538f
+#define STCK_THETA5_A 0.9f
+#define STCK_THETA5_B 3.89361f
+#define STCK_THETA5_T0 0.f
+#define STCK_THETA5_TS 0.95f
+#define STCK_THETA5_TC 1.16959f
+#define STCK_THETA6_A 0.9f
+#define STCK_THETA6_B 3.89361f
+#define STCK_THETA6_T0 0.f
+#define STCK_THETA6_TS 0.95f
+#define STCK_THETA6_TC 1.16959f
+#define STCK_F5_PHI1 0
+#define STCK_F5_PHI2 1
+
+#define CRST_F2 0
+#define CRST_RCLOW  0.45f
+#define CRST_RCHIGH 0.7f
+#define CRST_THETA1_A 2.25f
+#define CRST_THETA1_B 7.00545f
+#define CRST_THETA1_T0 (PI - 2.35f)
+#define CRST_THETA1_TS 0.58f
+#define CRST_THETA1_TC 0.766284f
+#define CRST_THETA2_A 1.70f
+#define CRST_THETA2_B 6.2469f
+#define CRST_THETA2_T0 1.f
+#define CRST_THETA2_TS 0.68f
+#define CRST_THETA2_TC 0.865052f
+#define CRST_THETA3_A 1.70f
+#define CRST_THETA3_B 6.2469f
+#define CRST_THETA3_T0 1.f
+#define CRST_THETA3_TS 0.68f
+#define CRST_THETA3_TC 0.865052f
+#define CRST_THETA4_A 1.50f
+#define CRST_THETA4_B 2.59556f
+#define CRST_THETA4_T0 0.f
+#define CRST_THETA4_TS 0.65f
+#define CRST_THETA4_TC 1.02564f
+#define CRST_THETA7_A 1.70f
+#define CRST_THETA7_B 6.2469f
+#define CRST_THETA7_T0 0.875f
+#define CRST_THETA7_TS 0.68f
+#define CRST_THETA7_TC 0.865052f
+#define CRST_THETA8_A 1.70f
+#define CRST_THETA8_B 6.2469f
+#define CRST_THETA8_T0 0.875f
+#define CRST_THETA8_TS 0.68f
+#define CRST_THETA8_TC 0.865052f
+
+#define CXST_F2 1
+#define CXST_RCLOW  0.177778f
+#define CXST_RCHIGH 0.6222222f
+#define CXST_THETA1_A 2.f
+#define CXST_THETA1_B 10.9032f
+#define CXST_THETA1_T0_OXDNA  (PI - 0.60f)
+#define CXST_THETA1_T0_OXDNA2 (PI - 0.25f)
+#define CXST_THETA1_TS 0.65f
+#define CXST_THETA1_TC 0.769231f
+#define CXST_THETA1_SA 20.f
+#define CXST_THETA1_SB (PI - 0.1f*(PI - (PI - 0.25f)))
+#define CXST_THETA4_A 1.3f
+#define CXST_THETA4_B 6.4381f
+#define CXST_THETA4_T0 0.f
+#define CXST_THETA4_TS 0.8f
+#define CXST_THETA4_TC 0.961538f
+#define CXST_THETA5_A 0.9f
+#define CXST_THETA5_B 3.89361f
+#define CXST_THETA5_T0 0.f
+#define CXST_THETA5_TS 0.95f
+#define CXST_THETA5_TC 1.16959f
+#define CXST_THETA6_A 0.9f
+#define CXST_THETA6_B 3.89361f
+#define CXST_THETA6_T0 0.f
+#define CXST_THETA6_TS 0.95f
+#define CXST_THETA6_TC 1.16959f
+#define CXST_F5_PHI3 2
+
+// ---------------------------------------------------------------------------
+//  Runtime parameters (kept in sync with MetalDNAInteraction.mm)
+// ---------------------------------------------------------------------------
 struct DNAInteractionParams {
     float F1_EPS[50];
     float F1_SHIFT[50];
@@ -19,7 +188,7 @@ struct DNAInteractionParams {
     float F1_RHIGH[2];
     float F1_RCLOW[2];
     float F1_RCHIGH[2];
-    
+
     float F2_K[2];
     float F2_RC[2];
     float F2_R0[2];
@@ -29,806 +198,791 @@ struct DNAInteractionParams {
     float F2_RHIGH[2];
     float F2_RCLOW[2];
     float F2_RCHIGH[2];
-    
-    float F4_THETA_A[13];
-    float F4_THETA_B[13];
-    float F4_THETA_T0[13];
-    float F4_THETA_TS[13];
-    float F4_THETA_TC[13];
-    
+
     float F5_PHI_A[4];
     float F5_PHI_B[4];
     float F5_PHI_XC[4];
     float F5_PHI_XS[4];
-    
+
     float hb_multiplier;
     float T;
-    
-    // Debye Huckel
+
     float dh_RC;
     float dh_RHIGH;
     float dh_prefactor;
     float dh_B;
     float dh_minus_kappa;
-    int dh_half_charged_ends;
-    
-    // Flags
-    int grooving;
-    int use_oxDNA2_coaxial_stacking;
-    int use_oxDNA2_FENE;
-    float mbf_fmax;
+    int   dh_half_charged_ends;
+
+    int   grooving;
+    int   use_oxDNA2_coaxial_stacking;
+    int   use_oxDNA2_FENE;
+    int   use_debye_huckel;
+    int   use_mbf;
+    float mbf_xmax;
+    float mbf_finf;
 };
 
 struct InitStrandArgs {
     int N;
 };
 
-// Helper macros
-#define SQR(x) ((x)*(x))
-#define CUBE(x) ((x)*(x)*(x))
-
-// Constants
-// Constants
-#define PI 3.141592653589793f
-
-// Positions
-#define POS_BACK -0.4f
-#define POS_BASE 0.4f
-#define POS_STACK 0.34f
-
-// EXCLUDED VOLUME
-#define EXCL_EPS 2.0f
-// 1 = Back-Back, 2 = Base-Base, 3 = Base-Back, 4 = Back-Base
-// S = sigma, R = rstar, B = b, RC = rc
-#define EXCL_S1 0.70f
-#define EXCL_S2 0.33f
-#define EXCL_S3 0.515f
-#define EXCL_S4 0.515f
-
-#define EXCL_R1 0.675f
-#define EXCL_R2 0.32f
-#define EXCL_R3 0.50f
-#define EXCL_R4 0.50f
-
-#define EXCL_B1 892.016223343f
-#define EXCL_B2 4119.70450017f
-#define EXCL_B3 1707.30627298f
-#define EXCL_B4 1707.30627298f
-
-#define EXCL_RC1 0.711879214356f
-#define EXCL_RC2 0.335388426126f
-#define EXCL_RC3 0.52329943261f
-#define EXCL_RC4 0.52329943261f
-
-// Model Constants (from model.h)
-#define HYDR_F1 0
-#define STCK_F1 1
-
-#define STCK_F4_THETA4 0
-#define STCK_F4_THETA5 1
-#define STCK_F4_THETA6 1
-
-#define STCK_F5_PHI1 0
-#define STCK_F5_PHI2 1
-
-#define FENE_EPS 2.0f
-#define FENE_R0 0.7525f
-#define FENE_DELTA 0.25f
-#define FENE_DELTA2 (FENE_DELTA*FENE_DELTA)
-
-// Interaction Constants (Indices)
-#define BACKBONE 0
-#define BONDED_EXCLUDED_VOLUME 1
-#define STACKING 2
-#define NONBONDED_EXCLUDED_VOLUME 3
-#define HYDROGEN_BONDING 4
-#define CROSS_STACKING 5
-#define COAXIAL_STACKING 6
-
-// Helix axis definitions
-// Quaternion to Axes
-inline void get_axes(m_number4 q, thread float3 &a1, thread float3 &a2, thread float3 &a3) {
-    float x = q.x;
-    float y = q.y;
-    float z = q.z;
-    float w = q.w;
-    
-    float x2 = x*x;
-    float y2 = y*y;
-    float z2 = z*z;
-    float xy = x*y;
-    float xz = x*z;
-    float yz = y*z;
-    float wx = w*x;
-    float wy = w*y;
-    float wz = w*z;
-    
-    a1 = float3(1.0f - 2.0f*(y2 + z2), 2.0f*(xy + wz), 2.0f*(xz - wy));
-    a2 = float3(2.0f*(xy - wz), 1.0f - 2.0f*(x2 + z2), 2.0f*(yz + wx));
-    a3 = float3(2.0f*(xz + wy), 2.0f*(yz - wx), 1.0f - 2.0f*(x2 + y2));
+// ---------------------------------------------------------------------------
+//  Small helpers
+// ---------------------------------------------------------------------------
+inline float lracos(float x) {
+    return (x >= 1.0f) ? 0.0f : ((x <= -1.0f) ? PI : acos(x));
 }
 
-// Implementations
+inline float3 stably_normalised(float3 v) {
+    float m = fmax(fmax(fabs(v.x), fabs(v.y)), fabs(v.z));
+    if(m <= 0.0f) return v;
+    float3 res = v / m;
+    float res_mod = length(res);
+    return (res_mod > 0.0f) ? res / res_mod : res;
+}
 
-inline float _f1(float r, int type, int n3, int n5, constant DNAInteractionParams &params) {
+// quaternion (x,y,z,w) -> body axes, matches CUDA get_vectors_from_quat
+inline void get_axes(float4 q, thread float3 &a1, thread float3 &a2, thread float3 &a3) {
+    float sqx = q.x * q.x;
+    float sqy = q.y * q.y;
+    float sqz = q.z * q.z;
+    float sqw = q.w * q.w;
+    float xy = q.x * q.y;
+    float xz = q.x * q.z;
+    float xw = q.x * q.w;
+    float yz = q.y * q.z;
+    float yw = q.y * q.w;
+    float zw = q.z * q.w;
+
+    a1 = float3(sqx - sqy - sqz + sqw, 2.0f * (xy + zw),         2.0f * (xz - yw));
+    a2 = float3(2.0f * (xy - zw),      -sqx + sqy - sqz + sqw,   2.0f * (yz + xw));
+    a3 = float3(2.0f * (xz + yw),      2.0f * (yz - xw),         -sqx - sqy + sqz + sqw);
+}
+
+// ---------------------------------------------------------------------------
+//  f1..f5 potentials and derivatives (mirrors CUDA_DNA.cuh)
+// ---------------------------------------------------------------------------
+inline float _f1(float r, int type, int n3, int n5, constant DNAInteractionParams &p) {
     float val = 0.0f;
-    if(r < params.F1_RCHIGH[type]) {
-        int idx = type * 25 + n3 * 5 + n5;
-        if(r > params.F1_RHIGH[type]) {
-            val = params.F1_EPS[idx] * params.F1_BHIGH[type] * SQR(r - params.F1_RCHIGH[type]);
+    if(r < p.F1_RCHIGH[type]) {
+        int idx = 25 * type + n3 * 5 + n5;
+        if(r > p.F1_RHIGH[type]) {
+            val = p.F1_EPS[idx] * p.F1_BHIGH[type] * SQR(r - p.F1_RCHIGH[type]);
         }
-        else if(r > params.F1_RLOW[type]) {
-            float tmp = 1.0f - exp(-(r - params.F1_R0[type]) * params.F1_A[type]);
-            val = params.F1_EPS[idx] * SQR(tmp) - params.F1_SHIFT[idx];
+        else if(r > p.F1_RLOW[type]) {
+            float tmp = 1.0f - exp(-(r - p.F1_R0[type]) * p.F1_A[type]);
+            val = p.F1_EPS[idx] * SQR(tmp) - p.F1_SHIFT[idx];
         }
-        else if(r > params.F1_RCLOW[type]) {
-            val = params.F1_EPS[idx] * params.F1_BLOW[type] * SQR(r - params.F1_RCLOW[type]);
+        else if(r > p.F1_RCLOW[type]) {
+            val = p.F1_EPS[idx] * p.F1_BLOW[type] * SQR(r - p.F1_RCLOW[type]);
         }
     }
     return val;
 }
 
-inline float _f1D(float r, int type, int n3, int n5, constant DNAInteractionParams &params) {
-    if(r > params.F1_RCHIGH[type]) return 0.0f;
-    if(r < params.F1_RCLOW[type]) return 0.0f; 
-    
-    int idx = type * 25 + n3 * 5 + n5;
-    float r0 = params.F1_R0[type];
-    float eps = params.F1_EPS[idx]; 
-    float alpha = params.F1_A[type];
-    
-    // Simplified derivative for Morse region
-    float expr = exp(-(r - r0) * alpha);
-    return 2.0f * eps * alpha * (1.0f - expr) * expr;
-}
-
-inline float _f2(float r, int type, constant DNAInteractionParams &params) {
+inline float _f1D(float r, int type, int n3, int n5, constant DNAInteractionParams &p) {
     float val = 0.0f;
-    if(r < params.F2_RCHIGH[type]) {
-        if(r > params.F2_RHIGH[type]) {
-            val = params.F2_K[type] * params.F2_BHIGH[type] * SQR(r - params.F2_RCHIGH[type]);
+    if(r < p.F1_RCHIGH[type]) {
+        float eps = p.F1_EPS[25 * type + n3 * 5 + n5];
+        if(r > p.F1_RHIGH[type]) {
+            val = 2.0f * eps * p.F1_BHIGH[type] * (r - p.F1_RCHIGH[type]);
         }
-        else if(r > params.F2_RLOW[type]) {
-            val = (params.F2_K[type] / 2.0f) * (SQR(r - params.F2_R0[type]) - SQR(params.F2_RC[type] - params.F2_R0[type]));
+        else if(r > p.F1_RLOW[type]) {
+            float tmp = exp(-(r - p.F1_R0[type]) * p.F1_A[type]);
+            val = 2.0f * eps * (1.0f - tmp) * tmp * p.F1_A[type];
         }
-        else if(r > params.F2_RCLOW[type]) {
-            val = params.F2_K[type] * params.F2_BLOW[type] * SQR(r - params.F2_RCLOW[type]);
+        else if(r > p.F1_RCLOW[type]) {
+            val = 2.0f * eps * p.F1_BLOW[type] * (r - p.F1_RCLOW[type]);
         }
     }
     return val;
 }
-inline float _f2D(float r, int type, constant DNAInteractionParams &params) { return 0.0f; }
 
-inline float _f4(float t, int type, constant DNAInteractionParams &params) {
-    // Clamp input cosine
-    if(t > 1.0f) t = 1.0f;
-    if(t < -1.0f) t = -1.0f;
-
-    float cost = t;
-    float acos_t = acos(cost); 
-    float t_angle = acos_t - params.F4_THETA_T0[type];
-    
-    // Check range
-    float abs_t = fabs(t_angle);
-    if(abs_t > params.F4_THETA_TC[type]) return 0.0f;
-    
-    if(abs_t < params.F4_THETA_TS[type]) {
-        return 1.0f - params.F4_THETA_A[type] * SQR(abs_t);
+inline float _f2(float r, int type, constant DNAInteractionParams &p) {
+    float val = 0.0f;
+    if(r < p.F2_RCHIGH[type]) {
+        if(r > p.F2_RHIGH[type]) {
+            val = p.F2_K[type] * p.F2_BHIGH[type] * SQR(r - p.F2_RCHIGH[type]);
+        }
+        else if(r > p.F2_RLOW[type]) {
+            val = (p.F2_K[type] * 0.5f) * (SQR(r - p.F2_R0[type]) - SQR(p.F2_RC[type] - p.F2_R0[type]));
+        }
+        else if(r > p.F2_RCLOW[type]) {
+            val = p.F2_K[type] * p.F2_BLOW[type] * SQR(r - p.F2_RCLOW[type]);
+        }
     }
-    else {
-        return params.F4_THETA_B[type] * SQR(params.F4_THETA_TC[type] - abs_t);
-    }
-}
-// Helper to get sin(theta) safely
-inline float _sin_from_cos(float cost) {
-    float sin_sq = 1.0f - cost*cost;
-    return (sin_sq > 1e-6f) ? sqrt(sin_sq) : 1e-3f; // Avoid div by zero
+    return val;
 }
 
-inline float _f4Dsin(float cost, int type, constant DNAInteractionParams &params) {
-    // cost is cosine.
-    // Clamp cost
-    if(cost > 1.0f) cost = 1.0f;
-    if(cost < -1.0f) cost = -1.0f;
-    
-    float theta = acos(cost);
-    float t_target = params.F4_THETA_T0[type];
-    float delta = theta - t_target;
-    
-    float dV_ddelta = 0.0f;
-    float abs_delta = fabs(delta);
-    
-    // Logic mirroring _f4, but derivative
-    if(abs_delta < params.F4_THETA_TC[type]) {
-        if(abs_delta > params.F4_THETA_TS[type]) {
-             float sign = (delta > 0) ? 1.0f : -1.0f;
-             dV_ddelta = -2.0f * params.F4_THETA_B[type] * (params.F4_THETA_TC[type] - abs_delta) * sign;
+inline float _f2D(float r, int type, constant DNAInteractionParams &p) {
+    float val = 0.0f;
+    if(r < p.F2_RCHIGH[type]) {
+        if(r > p.F2_RHIGH[type]) {
+            val = 2.0f * p.F2_K[type] * p.F2_BHIGH[type] * (r - p.F2_RCHIGH[type]);
+        }
+        else if(r > p.F2_RLOW[type]) {
+            val = p.F2_K[type] * (r - p.F2_R0[type]);
+        }
+        else if(r > p.F2_RCLOW[type]) {
+            val = 2.0f * p.F2_K[type] * p.F2_BLOW[type] * (r - p.F2_RCLOW[type]);
+        }
+    }
+    return val;
+}
+
+inline float _f4(float t, float t0, float ts, float tc, float a, float b) {
+    float val = 0.0f;
+    t = copysign(t - t0, 1.0f);           // |t - t0|
+    if(t < tc) {
+        val = (t > ts) ? b * SQR(tc - t) : 1.0f - a * SQR(t);
+    }
+    return val;
+}
+
+inline float _f4_pure_harmonic(float t, float a, float b) {
+    t -= b;
+    return (t < 0.0f) ? 0.0f : a * SQR(t);
+}
+
+inline float _f4D(float t, float t0, float ts, float tc, float a, float b) {
+    float val = 0.0f;
+    t -= t0;
+    float m = copysign(1.0f, t);
+    t = copysign(t, 1.0f);                 // |t - t0|
+    if(t < tc) {
+        val = (t > ts) ? 2.0f * m * b * (t - tc) : -2.0f * m * a * t;
+    }
+    return val;
+}
+
+inline float _f4D_pure_harmonic(float t, float a, float b) {
+    t -= b;
+    return (t < 0.0f) ? 0.0f : 2.0f * a * t;
+}
+
+inline float _f5(float f, int type, constant DNAInteractionParams &p) {
+    float val = 0.0f;
+    if(f > p.F5_PHI_XC[type]) {
+        if(f < p.F5_PHI_XS[type]) {
+            val = p.F5_PHI_B[type] * SQR(p.F5_PHI_XC[type] - f);
+        }
+        else if(f < 0.0f) {
+            val = 1.0f - p.F5_PHI_A[type] * SQR(f);
         }
         else {
-             dV_ddelta = -2.0f * params.F4_THETA_A[type] * delta;
+            val = 1.0f;
         }
     }
-    
-    float sin_t = sqrt(1.0f - cost*cost);
-    if(sin_t < 1e-4f) {
-        return 2.0f * params.F4_THETA_A[type];
+    return val;
+}
+
+inline float _f5D(float f, int type, constant DNAInteractionParams &p) {
+    float val = 0.0f;
+    if(f > p.F5_PHI_XC[type]) {
+        if(f < p.F5_PHI_XS[type]) {
+            val = 2.0f * p.F5_PHI_B[type] * (f - p.F5_PHI_XC[type]);
+        }
+        else if(f < 0.0f) {
+            val = -2.0f * p.F5_PHI_A[type] * f;
+        }
     }
-    
-    return -dV_ddelta / sin_t;
+    return val;
 }
 
-inline float _f5(float f, int type, constant DNAInteractionParams &params) {
-    // Clamp input cosine
-    if(f > 1.0f) f = 1.0f;
-    if(f < -1.0f) f = -1.0f;
-    
-    float xc = params.F5_PHI_XC[type];
-    float xs = params.F5_PHI_XS[type];
-    
-    if(f < xc) return 0.0f;
-    if(f > xs) return 1.0f; 
-    
-    return params.F5_PHI_B[type] * SQR(f - xc);
-}
-
-inline float _f5D(float f, int type, constant DNAInteractionParams &params) {
-    // Clamp input cosine
-    if(f > 1.0f) f = 1.0f;
-    if(f < -1.0f) f = -1.0f;
-
-    float xc = params.F5_PHI_XC[type];
-    float xs = params.F5_PHI_XS[type];
-    
-    if(f < xc) return 0.0f;
-    if(f > xs) return 0.0f; 
-
-    return 2.0f * params.F5_PHI_B[type] * (f - xc); 
-}
-
-
-// Repulsive LJ implementation
-inline float _repulsive_lj(float3 r, thread float3 &force, float sigma, float rstar, float b, float rc, bool update_forces) {
-    float rnorm = length_squared(r);
-    float energy = 0.0f;
-    
-    if(rnorm < SQR(rc)) {
-        if(rnorm > SQR(rstar)) {
-            float rmod = sqrt(rnorm);
+// repulsive LJ / smoothed excluded volume, matches CUDA _excluded_volume
+inline float3 _excluded_volume(float3 r, float sigma, float rstar, float b, float rc) {
+    float rsqr = dot(r, r);
+    float3 F = float3(0.0f);
+    if(rsqr < SQR(rc)) {
+        if(rsqr > SQR(rstar)) {
+            float rmod = sqrt(rsqr);
             float rrc = rmod - rc;
-            energy = EXCL_EPS * b * SQR(rrc);
-            if(update_forces) force = r * (2.0f * EXCL_EPS * b * rrc / rmod);
+            float fmod = 2.0f * EXCL_EPS * b * rrc / rmod;
+            F = r * fmod;
         }
         else {
-            float tmp = SQR(sigma) / rnorm;
-            float lj_part = tmp * tmp * tmp; 
-            energy = 4.0f * EXCL_EPS * (SQR(lj_part) - lj_part);
-            if(update_forces) force = r * (24.0f * EXCL_EPS * (lj_part - 2.0f*SQR(lj_part)) / rnorm);
+            float lj_part = CUB(SQR(sigma) / rsqr);
+            float fmod = 24.0f * EXCL_EPS * (lj_part - 2.0f * SQR(lj_part)) / rsqr;
+            F = r * fmod;
         }
     }
-    else {
-        if(update_forces) force = float3(0.0f);
-    }
-    return energy;
+    return F;
 }
 
-/**
- * @brief Initialize strand ends
- */
+// ---------------------------------------------------------------------------
+//  Bonded excluded volume (mirrors CUDA _bonded_excluded_volume<qIsN3>)
+// ---------------------------------------------------------------------------
+inline void _bonded_excluded_volume(bool qIsN3, float3 r,
+                                    float3 n3pos_base, float3 n3pos_back,
+                                    float3 n5pos_base, float3 n5pos_back,
+                                    thread float3 &F, thread float3 &T) {
+    float3 Ftmp;
+
+    Ftmp = _excluded_volume(r + n3pos_base - n5pos_base, EXCL_S2, EXCL_R2, EXCL_B2, EXCL_RC2);
+    T += qIsN3 ? cross(n5pos_base, Ftmp) : cross(n3pos_base, Ftmp);
+    F += Ftmp;
+
+    Ftmp = _excluded_volume(r + n3pos_back - n5pos_base, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3);
+    T += qIsN3 ? cross(n5pos_base, Ftmp) : cross(n3pos_back, Ftmp);
+    F += Ftmp;
+
+    Ftmp = _excluded_volume(r + n3pos_base - n5pos_back, EXCL_S4, EXCL_R4, EXCL_B4, EXCL_RC4);
+    T += qIsN3 ? cross(n5pos_back, Ftmp) : cross(n3pos_base, Ftmp);
+    F += Ftmp;
+}
+
+// ---------------------------------------------------------------------------
+//  Bonded part: FENE backbone + bonded excluded volume + stacking
+//  (mirrors CUDA _bonded_part<qIsN3>)
+//    n5* : the 5' partner (parameters n5pos/n5x/n5y/n5z)
+//    n3* : the 3' partner (parameters n3pos/n3x/n3y/n3z)
+//    r   : n3pos - n5pos (minimum image not needed for bonded neighbours)
+// ---------------------------------------------------------------------------
+inline void _bonded_part(bool qIsN3, float3 r,
+                         int n5type, float3 n5x, float3 n5y, float3 n5z,
+                         int n3type, float3 n3x, float3 n3y, float3 n3z,
+                         thread float3 &F, thread float3 &T,
+                         constant DNAInteractionParams &p) {
+    bool grooving = (p.grooving != 0);
+
+    float3 n5pos_back = grooving ? (n5x * POS_MM_BACK1 + n5y * POS_MM_BACK2) : (n5x * POS_BACK);
+    float3 n5pos_base = n5x * POS_BASE;
+    float3 n5pos_stack = n5x * POS_STACK;
+
+    float3 n3pos_back = grooving ? (n3x * POS_MM_BACK1 + n3y * POS_MM_BACK2) : (n3x * POS_BACK);
+    float3 n3pos_base = n3x * POS_BASE;
+    float3 n3pos_stack = n3x * POS_STACK;
+
+    float3 rback = r + n3pos_back - n5pos_back;
+    float rbackmod = length(rback);
+    float rbackr0 = rbackmod - (p.use_oxDNA2_FENE ? FENE_R0_OXDNA2 : FENE_R0_OXDNA);
+
+    float3 Ftmp;
+    if(p.use_mbf != 0 && fabs(rbackr0) > p.mbf_xmax) {
+        float mbf_fmax = (FENE_EPS * p.mbf_xmax / (FENE_DELTA2 - SQR(p.mbf_xmax)));
+        Ftmp = rback * (copysign(1.0f, rbackr0) *
+                        ((mbf_fmax - p.mbf_finf) * p.mbf_xmax / fabs(rbackr0) + p.mbf_finf) / rbackmod);
+    }
+    else {
+        Ftmp = rback * ((FENE_EPS * rbackr0 / (FENE_DELTA2 - SQR(rbackr0))) / rbackmod);
+    }
+
+    float3 Ttmp = qIsN3 ? cross(n5pos_back, Ftmp) : cross(n3pos_back, Ftmp);
+
+    // EXCLUDED VOLUME (bonded)
+    _bonded_excluded_volume(qIsN3, r, n3pos_base, n3pos_back, n5pos_base, n5pos_back, Ftmp, Ttmp);
+
+    if(qIsN3) { F += Ftmp; T += Ttmp; }
+    else      { F -= Ftmp; T -= Ttmp; }
+
+    // STACKING
+    float3 rstack = r + n3pos_stack - n5pos_stack;
+    float rstackmod = length(rstack);
+    float3 rstackdir = rstack / rstackmod;
+
+    float3 rbackref = r + n3x * POS_BACK - n5x * POS_BACK;
+    float rbackrefmod = length(rbackref);
+
+    float t4 = lracos(dot(n3z, n5z));
+    float cost5 = dot(n5z, rstackdir);
+    float t5 = lracos(cost5);
+    float cost6 = -dot(n3z, rstackdir);
+    float t6 = lracos(cost6);
+    float cosphi1 = dot(n5y, rbackref) / rbackrefmod;
+    float cosphi2 = dot(n3y, rbackref) / rbackrefmod;
+
+    float f1 = _f1(rstackmod, STCK_F1, n3type, n5type, p);
+    float f4t4 = _f4(t4, STCK_THETA4_T0, STCK_THETA4_TS, STCK_THETA4_TC, STCK_THETA4_A, STCK_THETA4_B);
+    float f4t5 = _f4(PI - t5, STCK_THETA5_T0, STCK_THETA5_TS, STCK_THETA5_TC, STCK_THETA5_A, STCK_THETA5_B);
+    float f4t6 = _f4(t6, STCK_THETA6_T0, STCK_THETA6_TS, STCK_THETA6_TC, STCK_THETA6_A, STCK_THETA6_B);
+    float f5phi1 = _f5(cosphi1, STCK_F5_PHI1, p);
+    float f5phi2 = _f5(cosphi2, STCK_F5_PHI2, p);
+
+    float energy = f1 * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2;
+
+    if(energy != 0.0f) {
+        float f1D = _f1D(rstackmod, STCK_F1, n3type, n5type, p);
+        float f4t4D = _f4D(t4, STCK_THETA4_T0, STCK_THETA4_TS, STCK_THETA4_TC, STCK_THETA4_A, STCK_THETA4_B);
+        float f4t5D = _f4D(PI - t5, STCK_THETA5_T0, STCK_THETA5_TS, STCK_THETA5_TC, STCK_THETA5_A, STCK_THETA5_B);
+        float f4t6D = _f4D(t6, STCK_THETA6_T0, STCK_THETA6_TS, STCK_THETA6_TC, STCK_THETA6_A, STCK_THETA6_B);
+        float f5phi1D = _f5D(cosphi1, STCK_F5_PHI1, p);
+        float f5phi2D = _f5D(cosphi2, STCK_F5_PHI2, p);
+
+        // RADIAL
+        Ftmp = rstackdir * (energy * f1D / f1);
+
+        // THETA 5
+        Ftmp += stably_normalised(n5z - cost5 * rstackdir) * (energy * f4t5D / (f4t5 * rstackmod));
+
+        // THETA 6
+        Ftmp += stably_normalised(n3z + cost6 * rstackdir) * (energy * f4t6D / (f4t6 * rstackmod));
+
+        // COS PHI 1
+        float ra2 = dot(rstackdir, n5y);
+        float ra1 = dot(rstackdir, n5x);
+        float rb1 = dot(rstackdir, n3x);
+        float a2b1 = dot(n5y, n3x);
+        float rbrm3 = SQR(rbackrefmod) * rbackrefmod;
+
+        float dcosphi1dr = (SQR(rstackmod) * ra2 - ra2 * SQR(rbackrefmod)
+                            - rstackmod * (a2b1 + ra2 * (-ra1 + rb1)) * GAMMA
+                            + a2b1 * (-ra1 + rb1) * SQR(GAMMA)) / rbrm3;
+        float dcosphi1dra1 = rstackmod * GAMMA * (rstackmod * ra2 - a2b1 * GAMMA) / rbrm3;
+        float dcosphi1dra2 = -rstackmod / rbackrefmod;
+        float dcosphi1drb1 = -(rstackmod * GAMMA * (rstackmod * ra2 - a2b1 * GAMMA)) / rbrm3;
+        float dcosphi1da1b1 = SQR(GAMMA) * (-rstackmod * ra2 + a2b1 * GAMMA) / rbrm3;
+        float dcosphi1da2b1 = GAMMA / rbackrefmod;
+
+        float force_part_phi1 = energy * f5phi1D / f5phi1;
+
+        Ftmp -= (rstackdir * dcosphi1dr
+                 + ((n5y - ra2 * rstackdir) * dcosphi1dra2
+                    + (n5x - ra1 * rstackdir) * dcosphi1dra1
+                    + (n3x - rb1 * rstackdir) * dcosphi1drb1) / rstackmod) * force_part_phi1;
+
+        // COS PHI 2   (p -> b, q -> a)
+        ra2 = dot(rstackdir, n3y);
+        ra1 = rb1;
+        rb1 = dot(rstackdir, n5x);
+        a2b1 = dot(n3y, n5x);
+        float dcosphi2dr = ((rstackmod * ra2 + a2b1 * GAMMA) * (rstackmod + (rb1 - ra1) * GAMMA)
+                            - ra2 * SQR(rbackrefmod)) / rbrm3;
+        float dcosphi2dra1 = -rstackmod * GAMMA * (rstackmod * ra2 + a2b1 * GAMMA) / rbrm3;
+        float dcosphi2dra2 = -rstackmod / rbackrefmod;
+        float dcosphi2drb1 = (rstackmod * GAMMA * (rstackmod * ra2 + a2b1 * GAMMA)) / rbrm3;
+        float dcosphi2da1b1 = -SQR(GAMMA) * (rstackmod * ra2 + a2b1 * GAMMA) / rbrm3;
+        float dcosphi2da2b1 = -GAMMA / rbackrefmod;
+
+        float force_part_phi2 = energy * f5phi2D / f5phi2;
+
+        Ftmp -= (rstackdir * dcosphi2dr
+                 + ((n3y - rstackdir * ra2) * dcosphi2dra2
+                    + (n3x - rstackdir * ra1) * dcosphi2dra1
+                    + (n5x - rstackdir * rb1) * dcosphi2drb1) / rstackmod) * force_part_phi2;
+
+        Ttmp = qIsN3 ? cross(n5pos_stack, Ftmp) : cross(n3pos_stack, Ftmp);
+
+        // THETA 4
+        Ttmp += stably_normalised(cross(n3z, n5z)) * (-energy * f4t4D / f4t4);
+
+        // PHI 1 & PHI 2
+        if(qIsN3) {
+            Ttmp += (-force_part_phi1 * dcosphi1dra2) * cross(rstackdir, n5y)
+                    - cross(rstackdir, n5x) * force_part_phi1 * dcosphi1dra1;
+            Ttmp += (-force_part_phi2 * dcosphi2drb1) * cross(rstackdir, n5x);
+        }
+        else {
+            Ttmp += force_part_phi1 * dcosphi1drb1 * cross(rstackdir, n3x);
+            Ttmp += force_part_phi2 * dcosphi2dra2 * cross(rstackdir, n3y)
+                    + force_part_phi2 * dcosphi2dra1 * cross(rstackdir, n3x);
+        }
+
+        Ttmp += force_part_phi1 * dcosphi1da2b1 * cross(n5y, n3x)
+                + cross(n5x, n3x) * force_part_phi1 * dcosphi1da1b1;
+        Ttmp += force_part_phi2 * dcosphi2da2b1 * cross(n5x, n3y)
+                + cross(n5x, n3x) * force_part_phi2 * dcosphi2da1b1;
+
+        if(qIsN3) {
+            Ttmp += stably_normalised(cross(rstackdir, n5z)) * (energy * f4t5D / f4t5);
+            T += Ttmp;
+            F += Ftmp;
+        }
+        else {
+            Ttmp += stably_normalised(cross(rstackdir, n3z)) * (-energy * f4t6D / f4t6);
+            T -= Ttmp;
+            F -= Ftmp;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Non-bonded pair interaction
+//  (mirrors CUDA _particle_particle_DNA_interaction)
+//   r  : qpos - ppos (minimum image);  a* : p axes;  b* : q axes
+//   F,T accumulate onto particle p (IND), returned in the lab frame
+// ---------------------------------------------------------------------------
+inline void _particle_particle_DNA_interaction(float3 r,
+                                               int ptype, float3 a1, float3 a2, float3 a3,
+                                               int qtype, float3 b1, float3 b2, float3 b3,
+                                               bool p_is_end, bool q_is_end,
+                                               thread float3 &F, thread float3 &T,
+                                               constant DNAInteractionParams &p) {
+    bool grooving = (p.grooving != 0);
+    bool use_dh = (p.use_debye_huckel != 0);
+    bool use_ox2_cxst = (p.use_oxDNA2_coaxial_stacking != 0);
+    int int_type = ptype + qtype;   // WC-complementary pairs sum to 3
+
+    float3 ppos_back = grooving ? (POS_MM_BACK1 * a1 + POS_MM_BACK2 * a2) : (POS_BACK * a1);
+    float3 ppos_base = POS_BASE * a1;
+    float3 ppos_stack = POS_STACK * a1;
+
+    float3 qpos_back = grooving ? (POS_MM_BACK1 * b1 + POS_MM_BACK2 * b2) : (POS_BACK * b1);
+    float3 qpos_base = POS_BASE * b1;
+    float3 qpos_stack = POS_STACK * b1;
+
+    // ---- excluded volume (BACK-BACK + the three base/back terms) ----
+    float3 Ftmp = float3(0.0f);
+    float3 rbackbone = r + qpos_back - ppos_back;
+    Ftmp = _excluded_volume(rbackbone, EXCL_S1, EXCL_R1, EXCL_B1, EXCL_RC1);
+    float3 Ttmp = cross(ppos_back, Ftmp);
+    _bonded_excluded_volume(true, r, qpos_base, qpos_back, ppos_base, ppos_back, Ftmp, Ttmp);
+    F += Ftmp;
+
+    // ---- Debye-Huckel ----
+    if(use_dh) {
+        float rbackmod = length(rbackbone);
+        if(rbackmod < p.dh_RC) {
+            float3 rbackdir = rbackbone / rbackmod;
+            if(rbackmod < p.dh_RHIGH) {
+                Ftmp = rbackdir * (-p.dh_prefactor * exp(p.dh_minus_kappa * rbackmod)
+                                   * (p.dh_minus_kappa / rbackmod - 1.0f / SQR(rbackmod)));
+            }
+            else {
+                Ftmp = rbackdir * (-2.0f * p.dh_B * (rbackmod - p.dh_RC));
+            }
+            if(p.dh_half_charged_ends != 0 && p_is_end) Ftmp *= 0.5f;
+            if(p.dh_half_charged_ends != 0 && q_is_end) Ftmp *= 0.5f;
+
+            Ttmp -= cross(ppos_back, Ftmp);
+            F -= Ftmp;
+        }
+    }
+
+    // ---- hydrogen bonding ----
+    float3 rhydro = r + qpos_base - ppos_base;
+    float rhydromodsqr = dot(rhydro, rhydro);
+    if(int_type == 3 && SQR(HYDR_RCLOW) < rhydromodsqr && rhydromodsqr < SQR(HYDR_RCHIGH)) {
+        float hb_multi = 1.0f; // sequence-dependent multiplier handled by F1_EPS
+        float rhydromod = sqrt(rhydromodsqr);
+        float3 rhydrodir = rhydro / rhydromod;
+
+        float t1 = lracos(-dot(a1, b1));
+        float cost2 = -dot(b1, rhydrodir);
+        float t2 = lracos(cost2);
+        float cost3 = dot(a1, rhydrodir);
+        float t3 = lracos(cost3);
+        float t4 = lracos(dot(a3, b3));
+        float cost7 = -dot(rhydrodir, b3);
+        float t7 = lracos(cost7);
+        float cost8 = dot(rhydrodir, a3);
+        float t8 = lracos(cost8);
+
+        float f1 = hb_multi * _f1(rhydromod, HYDR_F1, ptype, qtype, p);
+        float f4t1 = _f4(t1, HYDR_THETA1_T0, HYDR_THETA1_TS, HYDR_THETA1_TC, HYDR_THETA1_A, HYDR_THETA1_B);
+        float f4t2 = _f4(t2, HYDR_THETA2_T0, HYDR_THETA2_TS, HYDR_THETA2_TC, HYDR_THETA2_A, HYDR_THETA2_B);
+        float f4t3 = _f4(t3, HYDR_THETA3_T0, HYDR_THETA3_TS, HYDR_THETA3_TC, HYDR_THETA3_A, HYDR_THETA3_B);
+        float f4t4 = _f4(t4, HYDR_THETA4_T0, HYDR_THETA4_TS, HYDR_THETA4_TC, HYDR_THETA4_A, HYDR_THETA4_B);
+        float f4t7 = _f4(t7, HYDR_THETA7_T0, HYDR_THETA7_TS, HYDR_THETA7_TC, HYDR_THETA7_A, HYDR_THETA7_B);
+        float f4t8 = _f4(t8, HYDR_THETA8_T0, HYDR_THETA8_TS, HYDR_THETA8_TC, HYDR_THETA8_A, HYDR_THETA8_B);
+
+        float hb_energy = f1 * f4t1 * f4t2 * f4t3 * f4t4 * f4t7 * f4t8;
+
+        if(hb_energy < 0.0f) {
+            float f1D = hb_multi * _f1D(rhydromod, HYDR_F1, ptype, qtype, p);
+            float f4t1D = -_f4D(t1, HYDR_THETA1_T0, HYDR_THETA1_TS, HYDR_THETA1_TC, HYDR_THETA1_A, HYDR_THETA1_B);
+            float f4t2D = -_f4D(t2, HYDR_THETA2_T0, HYDR_THETA2_TS, HYDR_THETA2_TC, HYDR_THETA2_A, HYDR_THETA2_B);
+            float f4t3D = _f4D(t3, HYDR_THETA3_T0, HYDR_THETA3_TS, HYDR_THETA3_TC, HYDR_THETA3_A, HYDR_THETA3_B);
+            float f4t4D = _f4D(t4, HYDR_THETA4_T0, HYDR_THETA4_TS, HYDR_THETA4_TC, HYDR_THETA4_A, HYDR_THETA4_B);
+            float f4t7D = -_f4D(t7, HYDR_THETA7_T0, HYDR_THETA7_TS, HYDR_THETA7_TC, HYDR_THETA7_A, HYDR_THETA7_B);
+            float f4t8D = _f4D(t8, HYDR_THETA8_T0, HYDR_THETA8_TS, HYDR_THETA8_TC, HYDR_THETA8_A, HYDR_THETA8_B);
+
+            Ftmp = rhydrodir * hb_energy * f1D / f1;
+
+            Ttmp -= stably_normalised(cross(a3, b3)) * (-hb_energy * f4t4D / f4t4);
+            Ttmp -= stably_normalised(cross(a1, b1)) * (-hb_energy * f4t1D / f4t1);
+
+            Ftmp -= stably_normalised(b1 + rhydrodir * cost2) * (hb_energy * f4t2D / (f4t2 * rhydromod));
+
+            float part = -hb_energy * f4t3D / f4t3;
+            Ftmp -= stably_normalised(a1 - rhydrodir * cost3) * (-part / rhydromod);
+            Ttmp += stably_normalised(cross(rhydrodir, a1)) * part;
+
+            Ftmp -= stably_normalised(b3 + rhydrodir * cost7) * (hb_energy * f4t7D / (f4t7 * rhydromod));
+
+            part = -hb_energy * f4t8D / f4t8;
+            Ftmp -= stably_normalised(a3 - rhydrodir * cost8) * (-part / rhydromod);
+            Ttmp += stably_normalised(cross(rhydrodir, a3)) * part;
+
+            Ttmp += cross(ppos_base, Ftmp);
+            F += Ftmp;
+        }
+    }
+
+    // ---- cross stacking ----
+    float3 rcstack = rhydro;
+    float rcstackmodsqr = rhydromodsqr;
+    if(SQR(CRST_RCLOW) < rcstackmodsqr && rcstackmodsqr < SQR(CRST_RCHIGH)) {
+        float rcstackmod = sqrt(rcstackmodsqr);
+        float3 rcstackdir = rcstack / rcstackmod;
+
+        float t1 = lracos(-dot(a1, b1));
+        float cost2 = -dot(b1, rcstackdir);
+        float t2 = lracos(cost2);
+        float cost3 = dot(a1, rcstackdir);
+        float t3 = lracos(cost3);
+        float t4 = lracos(dot(a3, b3));
+        float cost7 = -dot(rcstackdir, b3);
+        float t7 = lracos(cost7);
+        float cost8 = dot(rcstackdir, a3);
+        float t8 = lracos(cost8);
+
+        float f2 = _f2(rcstackmod, CRST_F2, p);
+        float f4t1 = _f4(t1, CRST_THETA1_T0, CRST_THETA1_TS, CRST_THETA1_TC, CRST_THETA1_A, CRST_THETA1_B);
+        float f4t2 = _f4(t2, CRST_THETA2_T0, CRST_THETA2_TS, CRST_THETA2_TC, CRST_THETA2_A, CRST_THETA2_B);
+        float f4t3 = _f4(t3, CRST_THETA3_T0, CRST_THETA3_TS, CRST_THETA3_TC, CRST_THETA3_A, CRST_THETA3_B);
+        float f4t4 = _f4(t4, CRST_THETA4_T0, CRST_THETA4_TS, CRST_THETA4_TC, CRST_THETA4_A, CRST_THETA4_B)
+                   + _f4(PI - t4, CRST_THETA4_T0, CRST_THETA4_TS, CRST_THETA4_TC, CRST_THETA4_A, CRST_THETA4_B);
+        float f4t7 = _f4(t7, CRST_THETA7_T0, CRST_THETA7_TS, CRST_THETA7_TC, CRST_THETA7_A, CRST_THETA7_B)
+                   + _f4(PI - t7, CRST_THETA7_T0, CRST_THETA7_TS, CRST_THETA7_TC, CRST_THETA7_A, CRST_THETA7_B);
+        float f4t8 = _f4(t8, CRST_THETA8_T0, CRST_THETA8_TS, CRST_THETA8_TC, CRST_THETA8_A, CRST_THETA8_B)
+                   + _f4(PI - t8, CRST_THETA8_T0, CRST_THETA8_TS, CRST_THETA8_TC, CRST_THETA8_A, CRST_THETA8_B);
+
+        float cstk_energy = f2 * f4t1 * f4t2 * f4t3 * f4t4 * f4t7 * f4t8;
+
+        if(cstk_energy < 0.0f) {
+            float f2D = _f2D(rcstackmod, CRST_F2, p);
+            float f4t1D = -_f4D(t1, CRST_THETA1_T0, CRST_THETA1_TS, CRST_THETA1_TC, CRST_THETA1_A, CRST_THETA1_B);
+            float f4t2D = -_f4D(t2, CRST_THETA2_T0, CRST_THETA2_TS, CRST_THETA2_TC, CRST_THETA2_A, CRST_THETA2_B);
+            float f4t3D = _f4D(t3, CRST_THETA3_T0, CRST_THETA3_TS, CRST_THETA3_TC, CRST_THETA3_A, CRST_THETA3_B);
+            float f4t4D = _f4D(t4, CRST_THETA4_T0, CRST_THETA4_TS, CRST_THETA4_TC, CRST_THETA4_A, CRST_THETA4_B)
+                        - _f4D(PI - t4, CRST_THETA4_T0, CRST_THETA4_TS, CRST_THETA4_TC, CRST_THETA4_A, CRST_THETA4_B);
+            float f4t7D = -_f4D(t7, CRST_THETA7_T0, CRST_THETA7_TS, CRST_THETA7_TC, CRST_THETA7_A, CRST_THETA7_B)
+                        + _f4D(PI - t7, CRST_THETA7_T0, CRST_THETA7_TS, CRST_THETA7_TC, CRST_THETA7_A, CRST_THETA7_B);
+            float f4t8D = _f4D(t8, CRST_THETA8_T0, CRST_THETA8_TS, CRST_THETA8_TC, CRST_THETA8_A, CRST_THETA8_B)
+                        - _f4D(PI - t8, CRST_THETA8_T0, CRST_THETA8_TS, CRST_THETA8_TC, CRST_THETA8_A, CRST_THETA8_B);
+
+            Ftmp = rcstackdir * (cstk_energy * f2D / f2);
+
+            Ttmp -= stably_normalised(cross(a1, b1)) * (-cstk_energy * f4t1D / f4t1);
+
+            Ftmp -= stably_normalised(b1 + rcstackdir * cost2) * (cstk_energy * f4t2D / (f4t2 * rcstackmod));
+
+            float part = -cstk_energy * f4t3D / f4t3;
+            Ftmp -= stably_normalised(a1 - rcstackdir * cost3) * (-part / rcstackmod);
+            Ttmp += stably_normalised(cross(rcstackdir, a1)) * part;
+
+            Ttmp -= stably_normalised(cross(a3, b3)) * (-cstk_energy * f4t4D / f4t4);
+
+            Ftmp -= stably_normalised(b3 + rcstackdir * cost7) * (cstk_energy * f4t7D / (f4t7 * rcstackmod));
+
+            part = -cstk_energy * f4t8D / f4t8;
+            Ftmp -= stably_normalised(a3 - rcstackdir * cost8) * (-part / rcstackmod);
+            Ttmp += stably_normalised(cross(rcstackdir, a3)) * part;
+
+            Ttmp += cross(ppos_base, Ftmp);
+            F += Ftmp;
+        }
+    }
+
+    // ---- coaxial stacking ----
+    float3 rstack = r + qpos_stack - ppos_stack;
+    float rstackmodsqr = dot(rstack, rstack);
+    if(SQR(CXST_RCLOW) < rstackmodsqr && rstackmodsqr < SQR(CXST_RCHIGH)) {
+        float rstackmod = sqrt(rstackmodsqr);
+        float3 rstackdir = rstack / rstackmod;
+
+        float t1 = lracos(-dot(a1, b1));
+        float t4 = lracos(dot(a3, b3));
+        float cost5 = dot(a3, rstackdir);
+        float t5 = lracos(cost5);
+        float cost6 = -dot(b3, rstackdir);
+        float t6 = lracos(cost6);
+
+        float cosphi3 = 1.0f;
+        float f5cosphi3 = 1.0f;
+        float rbackrefmod = 1.0f;
+        if(!use_ox2_cxst) {
+            float3 rbackboneref = r + POS_BACK * b1 - POS_BACK * a1;
+            rbackrefmod = length(rbackboneref);
+            float3 rbackbonerefdir = rbackboneref / rbackrefmod;
+            cosphi3 = dot(rstackdir, cross(rbackbonerefdir, a1));
+            f5cosphi3 = _f5(cosphi3, CXST_F5_PHI3, p);
+        }
+
+        float f2 = _f2(rstackmod, CXST_F2, p);
+        float f4t1 = use_ox2_cxst
+            ? (_f4(t1, CXST_THETA1_T0_OXDNA2, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B)
+               + _f4_pure_harmonic(t1, CXST_THETA1_SA, CXST_THETA1_SB))
+            : (_f4(t1, CXST_THETA1_T0_OXDNA, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B)
+               + _f4(2.0f * PI - t1, CXST_THETA1_T0_OXDNA, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B));
+        float f4t4 = _f4(t4, CXST_THETA4_T0, CXST_THETA4_TS, CXST_THETA4_TC, CXST_THETA4_A, CXST_THETA4_B);
+        float f4t5 = _f4(t5, CXST_THETA5_T0, CXST_THETA5_TS, CXST_THETA5_TC, CXST_THETA5_A, CXST_THETA5_B)
+                   + _f4(PI - t5, CXST_THETA5_T0, CXST_THETA5_TS, CXST_THETA5_TC, CXST_THETA5_A, CXST_THETA5_B);
+        float f4t6 = _f4(t6, CXST_THETA6_T0, CXST_THETA6_TS, CXST_THETA6_TC, CXST_THETA6_A, CXST_THETA6_B)
+                   + _f4(PI - t6, CXST_THETA6_T0, CXST_THETA6_TS, CXST_THETA6_TC, CXST_THETA6_A, CXST_THETA6_B);
+
+        float cxst_energy = f2 * f4t1 * f4t4 * f4t5 * f4t6 * SQR(f5cosphi3);
+
+        if(cxst_energy < 0.0f) {
+            float f2D = _f2D(rstackmod, CXST_F2, p);
+            float f4t1D = use_ox2_cxst
+                ? (-_f4D(t1, CXST_THETA1_T0_OXDNA2, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B)
+                   - _f4D_pure_harmonic(t1, CXST_THETA1_SA, CXST_THETA1_SB))
+                : (-_f4D(t1, CXST_THETA1_T0_OXDNA, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B)
+                   + _f4D(2.0f * PI - t1, CXST_THETA1_T0_OXDNA, CXST_THETA1_TS, CXST_THETA1_TC, CXST_THETA1_A, CXST_THETA1_B));
+            float f4t4D = _f4D(t4, CXST_THETA4_T0, CXST_THETA4_TS, CXST_THETA4_TC, CXST_THETA4_A, CXST_THETA4_B);
+            float f4t5D = _f4D(t5, CXST_THETA5_T0, CXST_THETA5_TS, CXST_THETA5_TC, CXST_THETA5_A, CXST_THETA5_B)
+                        - _f4D(PI - t5, CXST_THETA5_T0, CXST_THETA5_TS, CXST_THETA5_TC, CXST_THETA5_A, CXST_THETA5_B);
+            float f4t6D = -_f4D(t6, CXST_THETA6_T0, CXST_THETA6_TS, CXST_THETA6_TC, CXST_THETA6_A, CXST_THETA6_B)
+                        + _f4D(PI - t6, CXST_THETA6_T0, CXST_THETA6_TS, CXST_THETA6_TC, CXST_THETA6_A, CXST_THETA6_B);
+
+            Ftmp = rstackdir * (cxst_energy * f2D / f2);
+
+            Ttmp -= stably_normalised(cross(a1, b1)) * (-cxst_energy * f4t1D / f4t1);
+            Ttmp -= stably_normalised(cross(a3, b3)) * (-cxst_energy * f4t4D / f4t4);
+
+            float part = cxst_energy * f4t5D / f4t5;
+            Ftmp -= stably_normalised(a3 - rstackdir * cost5) / rstackmod * part;
+            Ttmp -= stably_normalised(cross(rstackdir, a3)) * part;
+
+            Ftmp -= stably_normalised(b3 + rstackdir * cost6) * (cxst_energy * f4t6D / (f4t6 * rstackmod));
+
+            if(!use_ox2_cxst) {
+                float f5cosphi3D = _f5D(cosphi3, CXST_F5_PHI3, p);
+                float rbackrefmodcub = CUB(rbackrefmod);
+
+                float a2b1 = dot(a2, b1);
+                float a3b1 = dot(a3, b1);
+                float ra1 = dot(rstackdir, a1);
+                float ra2 = dot(rstackdir, a2);
+                float ra3 = dot(rstackdir, a3);
+                float rb1 = dot(rstackdir, b1);
+
+                float parentesi = (ra3 * a2b1 - ra2 * a3b1);
+                float dcdr    = -GAMMA * parentesi * (GAMMA * (ra1 - rb1) + rstackmod) / rbackrefmodcub;
+                float dcda1b1 =  GAMMA * SQR(GAMMA) * parentesi / rbackrefmodcub;
+                float dcda2b1 =  GAMMA * ra3 / rbackrefmod;
+                float dcda3b1 = -GAMMA * ra2 / rbackrefmod;
+                float dcdra1  = -SQR(GAMMA) * parentesi * rstackmod / rbackrefmodcub;
+                float dcdra2  = -GAMMA * a3b1 / rbackrefmod;
+                float dcdra3  =  GAMMA * a2b1 / rbackrefmod;
+                float dcdrb1  = -dcdra1;
+
+                part = cxst_energy * 2.0f * f5cosphi3D / f5cosphi3;
+
+                Ftmp -= part * (rstackdir * dcdr
+                                + ((a1 - rstackdir * ra1) * dcdra1
+                                   + (a2 - rstackdir * ra2) * dcdra2
+                                   + (a3 - rstackdir * ra3) * dcdra3
+                                   + (b1 - rstackdir * rb1) * dcdrb1) / rstackmod);
+
+                Ttmp += part * (cross(rstackdir, a1) * dcdra1
+                                + cross(rstackdir, a2) * dcdra2
+                                + cross(rstackdir, a3) * dcdra3);
+                Ttmp -= part * (cross(a1, b1) * dcda1b1
+                                + cross(a2, b1) * dcda2b1
+                                + cross(a3, b1) * dcda3b1);
+            }
+
+            Ttmp += cross(ppos_stack, Ftmp);
+            F += Ftmp;
+        }
+    }
+
+    T += Ttmp;
+}
+
+// ---------------------------------------------------------------------------
+//  Kernels
+// ---------------------------------------------------------------------------
 kernel void init_DNA_strand_ends(device int *is_strand_end [[buffer(0)]],
-                                 device MetalBonds *bonds [[buffer(1)]],
+                                 device MetalBonds *bonds   [[buffer(1)]],
                                  constant InitStrandArgs &args [[buffer(2)]],
                                  uint2 tid [[thread_position_in_grid]]) {
     int idx = tid.x;
     if(idx >= args.N) return;
-    
     MetalBonds b = bonds[idx];
     is_strand_end[idx] = (b.n3 == -1 || b.n5 == -1) ? 1 : 0;
 }
 
-    
-// FENE Backbone interaction
-inline float _backbone(int idx, int neighbor_idx, float3 r, float3 rback, bool update_forces, thread float3 &force, constant DNAInteractionParams &params) {
-    float rbackmod = length(rback);
-    float rbackr0 = rbackmod - 0.75f; // _fene_r0 fixed for now
-    
-    // FENE parameters
-    float delta_sqr = FENE_DELTA2;
-    float k_fene = FENE_EPS; 
-    
-    // Switch to harmonic at 90% of delta
-    float switch_ratio = 0.9f;
-    float switch_dist = FENE_DELTA * switch_ratio;
-    float switch_sqr = SQR(switch_dist);
-    
-    float r_sqr = SQR(rbackr0);
-    
-    float energy = 0.0f;
-    float fmod = 0.0f;
-    
-    if (r_sqr < switch_sqr) {
-        // Standard FENE
-        // FENE Singularity Check
-        if (r_sqr >= delta_sqr * 0.999f) {
-             r_sqr = delta_sqr * 0.999f;
-        }
-        
-        energy = -(k_fene / 2.0f) * log(1.0f - r_sqr / delta_sqr);
-        if(update_forces) {
-            fmod = -(k_fene * sqrt(r_sqr) / (delta_sqr - r_sqr)); // approx rbackr0 as sqrt(r_sqr) for safety in singularity? 
-            // Wait. rbackr0 is vector magnitude difference?
-            // In code: fmod = -(k_fene * rbackr0 / (delta_sqr - r_sqr));
-            // rbackr0 = rbackmod - r0.
-            // if r_sqr is clamped, we should probably calculate consistent force.
-            // Using logic:
-            fmod = -(k_fene * (sqrt(r_sqr) - params.F2_R0[0]) / (delta_sqr - r_sqr)); // Assuming type 0 parameters for simplicity or calculate per-step?
-            // Actually, simply letting the formula run with Clamped r_sqr is safe enough for Capping.
-            // The denominator won't be zero.
-            // rbackr0 will be large.
-            // Force will be large.
-            // mbf_fmax will cap it.
-            // Just ensure rbackr0 logic uses the clamped r?
-            // rbackr0 = rbackmod - r0. rbackmod is passed in.
-            // We can't easily change rbackmod without changing rback vector.
-            // So just clamping r_sqr in the formula avoids NaN in log and div by zero.
-            // fmod = ... / (pos). Valid.
-        }
-    } else {
-        // Harmonic Tail
-        float V_c = -(k_fene / 2.0f) * log(1.0f - switch_sqr / delta_sqr);
-        float F_c = -(k_fene * switch_dist / (delta_sqr - switch_sqr)); // Negative value
-        
-        float denom = delta_sqr - switch_sqr;
-        float K_tail = -(k_fene * (delta_sqr + switch_sqr)) / (denom * denom); // Negative slope
-        
-        float dr_tail = fabs(rbackr0) - switch_dist;
-        
-        energy = V_c - F_c * dr_tail - 0.5f * K_tail * SQR(dr_tail);
-        
-        if (update_forces) {
-            fmod = F_c + K_tail * dr_tail;
-            // Handle Compression sign (r < R0)
-            if (rbackr0 < 0) fmod = -fmod;
-        }
-    }
-    
-    if(update_forces) {
-        // Cap the force if mbf_fmax is set
-        if (params.mbf_fmax > 0.0f) {
-            if (fabs(fmod) > params.mbf_fmax) {
-                // Preserve sign
-                fmod = (fmod > 0.0f) ? params.mbf_fmax : -params.mbf_fmax;
-            }
-        }
-        
-        if (rbackmod > 1e-6f) {
-            force = rback * (fmod / rbackmod);
-        } else {
-            force = float3(0.0f);
-        }
-    }
-    
-    return energy;
-}
-
-// Bonded Excluded Volume
-inline float _bonded_excluded_volume(int idx, int neighbor_idx, float3 r, float3 r_pos, float3 q_pos, m_number4 p_quat, m_number4 q_quat, bool update_forces, thread float3 &force_p, thread float3 &force_q, thread float3 &torque_p, thread float3 &torque_q, constant DNAInteractionParams &params) {
-    float3 a1, a2, a3;
-    get_axes(p_quat, a1, a2, a3);
-    
-    float3 b1, b2, b3;
-    get_axes(q_quat, b1, b2, b3);
-    
-    float3 offset_p_base = a1 * POS_BASE;
-    float3 offset_q_base = b1 * POS_BASE;
-    float3 offset_p_back = a1 * POS_BACK;
-    float3 offset_q_back = b1 * POS_BACK;
-    
-    float energy = 0.0f;
-    float3 f = float3(0.0f);
-    
-    // BASE-BASE
-    float3 rcenter = r + offset_q_base - offset_p_base;
-    energy += _repulsive_lj(rcenter, f, EXCL_S2, EXCL_R2, EXCL_B2, EXCL_RC2, update_forces);
-    if(update_forces) {
-        force_p -= f;
-        force_q += f;
-        torque_p -= cross(offset_p_base, f);
-        torque_q += cross(offset_q_base, f);
-    }
-    
-    // P-BASE vs Q-BACK
-    rcenter = r + offset_q_back - offset_p_base;
-    f = float3(0.0f);
-    energy += _repulsive_lj(rcenter, f, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, update_forces);
-    if(update_forces) {
-        force_p -= f;
-        force_q += f;
-        torque_p -= cross(offset_p_base, f);
-        torque_q += cross(offset_q_back, f);
-    }
-    
-    // P-BACK vs Q-BASE
-    rcenter = r + offset_q_base - offset_p_back;
-    f = float3(0.0f);
-    energy += _repulsive_lj(rcenter, f, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, update_forces);
-    if(update_forces) {
-        force_p -= f;
-        force_q += f;
-        torque_p -= cross(offset_p_back, f);
-        torque_q += cross(offset_q_base, f);
-    }
-    
-    return energy;
-}
-
-
-// Stacking interaction
-inline float _stacking(int idx, int neighbor_idx, float3 r, float3 r_pos, float3 q_pos, m_number4 p_quat, m_number4 q_quat, int type_me, int type_neig, bool update_forces, thread float3 &force_p, thread float3 &force_q, thread float3 &torque_p, thread float3 &torque_q, constant DNAInteractionParams &params) {
-    
-    float3 a1, a2, a3;
-    get_axes(p_quat, a1, a2, a3);
-    
-    float3 b1, b2, b3;
-    get_axes(q_quat, b1, b2, b3);
-    
-    float3 rbackref = r + b1 * POS_BACK - a1 * POS_BACK;
-    float rbackrefmod = length(rbackref);
-    float rbackrefmodcub = CUBE(rbackrefmod);
-    
-    // Stack centers
-    float3 offset_p_stack = a1 * POS_STACK;
-    float3 offset_q_stack = b1 * POS_STACK;
-    float3 rstack = r + offset_q_stack - offset_p_stack;
-    float rstackmod = length(rstack);
-    float3 rstackdir = rstack / rstackmod;
-    
-    float cost4 = dot(a3, b3);
-    float cost5 = dot(a3, rstackdir);
-    float cost6 = -dot(b3, rstackdir);
-    float cosphi1 = dot(a2, rbackref) / rbackrefmod; 
-    float cosphi2 = dot(b2, rbackref) / rbackrefmod;
-    
-    float f1 = _f1(rstackmod, STCK_F1, type_me, type_neig, params);
-    float f4t4 = _f4(cost4, STCK_F4_THETA4, params); 
-    float f4t5 = _f4(-cost5, STCK_F4_THETA5, params);
-    float f4t6 = _f4(cost6, STCK_F4_THETA6, params);
-    float f5phi1 = _f5(cosphi1, STCK_F5_PHI1, params);
-    float f5phi2 = _f5(cosphi2, STCK_F5_PHI2, params);
-    
-    float energy = f1 * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2;
-    
-    if(update_forces && energy != 0.0f) {
-        float f1D = _f1D(rstackmod, STCK_F1, type_me, type_neig, params);
-        float f4t4Dsin = -_f4Dsin(cost4, STCK_F4_THETA4, params); 
-        float f4t5Dsin = -_f4Dsin(-cost5, STCK_F4_THETA5, params);
-        float f4t6Dsin = -_f4Dsin(cost6, STCK_F4_THETA6, params);
-        float f5phi1D = _f5D(cosphi1, STCK_F5_PHI1, params);
-        float f5phi2D = _f5D(cosphi2, STCK_F5_PHI2, params); // Checked CPU: _f5D
-        
-        // Radial Force (CPU: force = -rstackdir * ...)
-        // This is Force on Q? (Neig->Me is Q->P).
-        // If coeffs positive, -rstackdir points Q->P.
-        // p->force -= force -> Adds P->Q.
-        // We calculate "force_var" as per CPU.
-        float3 force_var = -rstackdir * (f1D * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2);
-        
-        // Theta 5
-        force_var += -(a3 - rstackdir * cost5) * (f1 * f4t4 * f4t5Dsin * f4t6 * f5phi1 * f5phi2 / rstackmod);
-        
-        // Theta 6
-        force_var += -(b3 + rstackdir * cost6) * (f1 * f4t4 * f4t5 * f4t6Dsin * f5phi1 * f5phi2 / rstackmod);
-        
-        // Phi 1
-        float gamma = POS_STACK - POS_BACK;
-        float ra2 = dot(rstackdir, a2);
-        float ra1 = dot(rstackdir, a1);
-        float rb1 = dot(rstackdir, b1);
-        float a2b1 = dot(a2, b1);
-        
-        float parentesi = rstackmod * ra2 - a2b1 * gamma;
-        
-        float dcosphi1dr = (SQR(rstackmod) * ra2 - ra2 * SQR(rbackrefmod) - rstackmod * (a2b1 + ra2 * (-ra1 + rb1)) * gamma + a2b1 * (-ra1 + rb1) * SQR(gamma)) / rbackrefmodcub;
-        float dcosphi1dra1 = rstackmod * gamma * parentesi / rbackrefmodcub;
-        float dcosphi1dra2 = -rstackmod / rbackrefmod;
-        float dcosphi1drb1 = -rstackmod * gamma * parentesi / rbackrefmodcub;
-        
-        float dcosphi1da1b1 = -SQR(gamma) * parentesi / rbackrefmodcub;
-        float dcosphi1da2b1 = gamma / rbackrefmod;
-        
-        float force_part_phi1 = -f1 * f4t4 * f4t5 * f4t6 * f5phi1D * f5phi2;
-        
-        force_var += -(rstackdir * dcosphi1dr + 
-                       ((a2 - rstackdir * ra2) * dcosphi1dra2 +
-                        (a1 - rstackdir * ra1) * dcosphi1dra1 + 
-                        (b1 - rstackdir * rb1) * dcosphi1drb1) / rstackmod) * force_part_phi1;
-                        
-        // Phi 2
-        ra2 = dot(rstackdir, b2);
-        ra1 = dot(rstackdir, b1);
-        rb1 = dot(rstackdir, a1);
-        a2b1 = dot(b2, a1);
-        
-        parentesi = rstackmod * ra2 + a2b1 * gamma;
-        
-        float dcosphi2dr = (parentesi * (rstackmod + (rb1 - ra1) * gamma) - ra2 * SQR(rbackrefmod)) / rbackrefmodcub;
-        float dcosphi2dra1 = -rstackmod * gamma * (rstackmod * ra2 + a2b1 * gamma) / rbackrefmodcub;
-        float dcosphi2dra2 = -rstackmod / rbackrefmod;
-        float dcosphi2drb1 = rstackmod * gamma * parentesi / rbackrefmodcub;
-        
-        float dcosphi2da1b1 = -SQR(gamma) * parentesi / rbackrefmodcub;
-        float dcosphi2da2b1 = -gamma / rbackrefmod;
-        
-        float force_part_phi2 = -f1 * f4t4 * f4t5 * f4t6 * f5phi1 * f5phi2D;
-        
-        force_var += -force_part_phi2 * (rstackdir * dcosphi2dr + 
-                                         ((b2 - rstackdir * ra2) * dcosphi2dra2 +
-                                          (b1 - rstackdir * ra1) * dcosphi2dra1 + 
-                                          (a1 - rstackdir * rb1) * dcosphi2drb1) / rstackmod);
-        
-        // Accumulate Forces
-        // p->force -= force_var;
-        // q->force += force_var;
-        force_p += -force_var;
-        force_q += force_var;
-        
-        // Lever arm Torques
-        torque_p += cross(offset_p_stack, -force_var);
-        torque_q += cross(offset_q_stack, force_var);
-        
-        // Theta 4 Torque
-        float3 t4dir = cross(b3, a3);
-        float torquemod = f1 * f4t4Dsin * f4t5 * f4t6 * f5phi1 * f5phi2;
-        torque_p -= t4dir * torquemod;
-        torque_q += t4dir * torquemod;
-        
-        // Theta 5
-        float3 t5dir = cross(rstackdir, a3);
-        torquemod = -f1 * f4t4 * f4t5Dsin * f4t6 * f5phi1 * f5phi2;
-        torque_p -= t5dir * torquemod;
-        
-        // Theta 6
-        float3 t6dir = cross(rstackdir, b3);
-        torquemod = f1 * f4t4 * f4t5 * f4t6Dsin * f5phi1 * f5phi2;
-        torque_q += t6dir * torquemod;
-        
-        // Phi 1 Torque
-        torque_p += cross(rstackdir, a2) * force_part_phi1 * dcosphi1dra2 +
-                    cross(rstackdir, a1) * force_part_phi1 * dcosphi1dra1;
-        torque_q += cross(rstackdir, b1) * force_part_phi1 * dcosphi1drb1;
-        
-        float3 puretorque = cross(a2, b1) * force_part_phi1 * dcosphi1da2b1 +
-                            cross(a1, b1) * force_part_phi1 * dcosphi1da1b1;
-        torque_p -= puretorque;
-        torque_q += puretorque;
-        
-        // Phi 2 Torque (Restore old ra1/rb1 meanings for clarity? Need to be careful.
-        // In CPU code, variables were reused.
-        // Here I reused ra2, ra1, rb1 in Phi 2 block.
-        // "particle p -> b, q -> a".
-        // a2 is now b2...
-        // Need to check cross products.
-        // CPU: torquep -> p (b? No).
-        // The block "Phi 2" calculates contribution relative based on swapped roles?
-        // But updates `force` (same var) contribution.
-        // Torques:
-        // torqueq += ... (related to b/q).
-        // torquep += ... (related to a/p).
-        
-        // Re-calculate variables for torque usage if needed.
-        // In Phi 2 block:
-        // ra2 = rstackdir * b2; ...
-        // CPU Line 683:
-        // torqueq += rstackdir.cross(b2) * force_part_phi2 * dcosphi2dra2 +
-        //            rstackdir.cross(b1) * force_part_phi2 * dcosphi2dra1;
-        // torquep += rstackdir.cross(a1) * force_part_phi2 * dcosphi2drb1;
-        
-        torque_q += cross(rstackdir, b2) * force_part_phi2 * dcosphi2dra2 + 
-                    cross(rstackdir, b1) * force_part_phi2 * dcosphi2dra1;
-        torque_p += cross(rstackdir, a1) * force_part_phi2 * dcosphi2drb1;
-        
-        puretorque = cross(b2, a1) * force_part_phi2 * dcosphi2da2b1 +
-                     cross(b1, a1) * force_part_phi2 * dcosphi2da1b1;
-                     
-        torque_q -= puretorque;
-        torque_p += puretorque;
-    }
-    
-    return energy;
-}
-
-/**
- * @brief DNA forces kernel
- */
-kernel void dna_forces(device m_number4 *poss [[buffer(0)]],
-                       device m_number4 *orientations [[buffer(1)]],
-                       device m_number4 *forces [[buffer(2)]],
-                       device m_number4 *torques [[buffer(3)]],
-                       device int *matrix_neighs [[buffer(4)]],
-                       device int *number_neighs [[buffer(5)]],
-                       device MetalBonds *bonds [[buffer(6)]],
+kernel void dna_forces(device m_number4 *poss           [[buffer(0)]],
+                       device m_number4 *orientations   [[buffer(1)]],
+                       device m_number4 *forces         [[buffer(2)]],
+                       device m_number4 *torques        [[buffer(3)]],
+                       device int *matrix_neighs        [[buffer(4)]],
+                       device int *number_neighs        [[buffer(5)]],
+                       device MetalBonds *bonds         [[buffer(6)]],
                        constant DNAInteractionParams &params [[buffer(7)]],
-                       constant MetalBox &box [[buffer(8)]],
-                       constant InitStrandArgs &args [[buffer(9)]],
-                       device float *energies [[buffer(10)]],
+                       constant MetalBox &box           [[buffer(8)]],
+                       constant InitStrandArgs &args    [[buffer(9)]],
+                       device float *energies           [[buffer(10)]],
                        uint2 tid [[thread_position_in_grid]]) {
     int idx = tid.x;
     if(idx >= args.N) return;
-    
-    // Clear energies
+
     if(energies) {
-         for(int k=0; k<10; k++) energies[idx*10 + k] = 0.0f;
+        for(int k = 0; k < 10; k++) energies[idx * 10 + k] = 0.0f;
     }
-    
-    float3 r_pos = poss[idx].xyz;
-    m_number4 p_quat = orientations[idx];
-    
-    MetalBonds b = bonds[idx];
-    int n_neighs = number_neighs[idx];
-    
-    float3 tot_force = float3(0.0f);
-    float3 tot_torque = float3(0.0f);
-    int type_me = (int)poss[idx].w;
-    
-    // 1. Bonded Interactions (Backbone)
-    // 1. Bonded Interactions (Backbone)
-    if(b.n3 != -1) {
-        int j = b.n3;
-        float3 rj_pos = poss[j].xyz;
-        float3 dr = rj_pos - r_pos;
-        dr = minimum_image(dr, box);
-        
-        m_number4 quat_me = p_quat; 
-        m_number4 quat_neig = orientations[j];
-        
-        float3 a1, a2, a3; get_axes(quat_me, a1, a2, a3);
-        float3 b1, b2, b3; get_axes(quat_neig, b1, b2, b3);
-        
-        // FENE: Me(n3) -> Neig (P=Me, Q=Neig)
-        // rback = dr_com + off_q - off_p
-        float3 rback = dr + b1 * POS_BACK - a1 * POS_BACK;
-        
-        float3 f = float3(0.0f);
-        float en = _backbone(idx, j, dr, rback, true, f, params);
-        if(energies) energies[idx*10 + 0] += en; 
-        tot_force += f; 
-        
-        // Stacking (Me -> Neig)
-        // Me is P (5'), Neig is Q (3').
-        int type_neig = (int)poss[j].w;
-        float3 f_p = float3(0.0f);
-        float3 f_q = float3(0.0f);
-        float3 t_p = float3(0.0f);
-        float3 t_q = float3(0.0f);
-        
-        float en_stack = _stacking(idx, j, dr, r_pos, rj_pos, quat_me, quat_neig, type_me, type_neig, true, f_p, f_q, t_p, t_q, params);
-        if(energies) energies[idx*10 + 2] += en_stack; 
-        
-        // Bonded Excluded Volume (Me -> Neig)
-        float en_bonded = _bonded_excluded_volume(idx, j, dr, r_pos, rj_pos, quat_me, quat_neig, true, f_p, f_q, t_p, t_q, params);
-        if(energies) energies[idx*10 + 1] += en_bonded;
 
-        /*
-        if (idx == 0) {
-             // printf("Step: idx=0, j=%d, r=%f, E_stack=%f, E_bond=%f, F_p=(%f,%f,%f)\n", 
-             //       j, length(dr), en_stack, en_bonded, f_p.x, f_p.y, f_p.z);
-        }
-        */
+    float3 ppos = poss[idx].xyz;
+    int ptype = (int) poss[idx].w;
+    MetalBonds pb = bonds[idx];
+    bool p_is_end = (pb.n3 == -1 || pb.n5 == -1);
 
-        tot_force += f_p;
-        tot_torque += t_p;
-    }
-    
-    // N5 Logic: Symmetric.
-    if(b.n5 != -1) {
-        int j = b.n5;
-        float3 rj_pos = poss[j].xyz;
-        float3 dr = rj_pos - r_pos;
-        dr = minimum_image(dr, box); 
-        
-        m_number4 quat_me = p_quat;
-        m_number4 quat_neig = orientations[j];
-        
-        float3 a1, a2, a3; get_axes(quat_me, a1, a2, a3);
-        float3 b1, b2, b3; get_axes(quat_neig, b1, b2, b3);
-        
-        // FENE: Neig(n3) -> Me (P=Neig, Q=Me)
-        // r = q - p = Me - Neig = -dr
-        // rback = (pos_me + off_me) - (pos_neig + off_neig)
-        // rback = -dr + off_me - off_neig
-        float3 rback = -dr + a1 * POS_BACK - b1 * POS_BACK;
-        
-        float3 f = float3(0.0f);
-        float en = _backbone(j, idx, -dr, rback, true, f, params); 
-        
-        // f is Force on J (First arg). Force on Me = -f.
-        tot_force -= f; 
-        
-        // Stacking (Neig -> Me)
-        // We are q (3'). Neig is p (5').
-        // Call _stacking(p, q...) -> _stacking(j, idx...)
-        int type_neig = (int)poss[j].w;
-        
-        float3 f_p = float3(0.0f);
-        float3 f_q = float3(0.0f);
-        float3 t_p = float3(0.0f);
-        float3 t_q = float3(0.0f);
-        
-        float en_stack = _stacking(j, idx, -dr, rj_pos, r_pos, quat_neig, quat_me, type_neig, type_me, true, f_p, f_q, t_p, t_q, params);
-        // Do NOT add energy (counted in n3 block of partner)
-        
-        // Bonded Excluded Volume (Neig -> Me)
-        // We are Q in _bonded_excl(p, q).
-        // call _bonded_excl(neig, me).
-        // Updates f_q, t_q (which is Me).
-        float en_bonded = _bonded_excluded_volume(j, idx, -dr, rj_pos, r_pos, quat_neig, quat_me, true, f_p, f_q, t_p, t_q, params);
-        
-        // We are Q.
-        tot_force += f_q;
-        tot_torque += t_q;
-    }
-    
-    // 2. Non-bonded Interactions (Excluded Volume)
-    // 2. Non-bonded Interactions (Excluded Volume)
-    for(int i = 0; i < n_neighs; i++) {
-        int j = matrix_neighs[i * args.N + idx]; 
-        
-        if (j == b.n3 || j == b.n5) continue; // Skip bonded
-        if (j == idx) continue; // Skip self
-        
-        float3 rj_pos = poss[j].xyz;
-        float3 dr = rj_pos - r_pos;
-        dr = minimum_image(dr, box);
-        
-        if (dot(dr, dr) < 0.0001f) continue; // Skip overlaps
-        
-        // Orientations
-        m_number4 start_quat = orientations[idx];
-        m_number4 end_quat = orientations[j];
-        
-        float3 a1, a2, a3;
-        get_axes(start_quat, a1, a2, a3);
-        
+    float3 a1, a2, a3;
+    get_axes(orientations[idx], a1, a2, a3);
+
+    float3 F = float3(0.0f);
+    float3 T = float3(0.0f);
+
+    // ---- bonded: 3' neighbour ----
+    if(pb.n3 != -1) {
+        int j = pb.n3;
+        float3 qpos = poss[j].xyz;
+        int qtype = (int) poss[j].w;
         float3 b1, b2, b3;
-        get_axes(end_quat, b1, b2, b3);
-        
-        // Interaction offsets
-        float3 offset_me_back = a1 * POS_BACK;
-        float3 offset_me_base = a1 * POS_BASE;
-        float3 offset_neig_back = b1 * POS_BACK;
-        float3 offset_neig_base = b1 * POS_BASE;
-        
-        float3 f_sub = float3(0.0f);
-        float en_sub = 0.0f;
-        
-        // 1. Back-Back (S1)
-        float3 dr_1 = dr + offset_neig_back - offset_me_back;
-        en_sub = _repulsive_lj(dr_1, f_sub, EXCL_S1, EXCL_R1, EXCL_B1, EXCL_RC1, true);
-        if(energies) energies[idx*10 + 1] += 0.5f * en_sub; 
-        tot_force += f_sub;
-        tot_torque += cross(offset_me_back, f_sub); // Torque enabled
+        get_axes(orientations[j], b1, b2, b3);
 
-        // 2. Base-Base (S2)
-        float3 dr_2 = dr + offset_neig_base - offset_me_base;
-        en_sub = _repulsive_lj(dr_2, f_sub, EXCL_S2, EXCL_R2, EXCL_B2, EXCL_RC2, true);
-        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
-        tot_force += f_sub;
-        tot_torque += cross(offset_me_base, f_sub);
-
-        // 3. Base-Back (Me Base - Neig Back) (S3)
-        float3 dr_3 = dr + offset_neig_back - offset_me_base;
-        en_sub = _repulsive_lj(dr_3, f_sub, EXCL_S3, EXCL_R3, EXCL_B3, EXCL_RC3, true);
-        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
-        tot_force += f_sub;
-        tot_torque += cross(offset_me_base, f_sub);
-
-        // 4. Back-Base (Me Back - Neig Base) (S4)
-        float3 dr_4 = dr + offset_neig_base - offset_me_back;
-        en_sub = _repulsive_lj(dr_4, f_sub, EXCL_S4, EXCL_R4, EXCL_B4, EXCL_RC4, true);
-        if(energies) energies[idx*10 + 1] += 0.5f * en_sub;
-        tot_force += f_sub;
-        tot_torque += cross(offset_me_back, f_sub);
+        float3 r = qpos - ppos;
+        r = minimum_image(r, box);
+        float3 dF = float3(0.0f);
+        // qIsN3 = true : n5 partner = me (a*), n3 partner = j (b*)
+        _bonded_part(true, r, ptype, a1, a2, a3, qtype, b1, b2, b3, dF, T, params);
+        F += dF;
     }
-    
-    forces[idx].xyz += tot_force;
-    torques[idx].xyz += tot_torque;
+
+    // ---- bonded: 5' neighbour ----
+    if(pb.n5 != -1) {
+        int j = pb.n5;
+        float3 qpos = poss[j].xyz;
+        int qtype = (int) poss[j].w;
+        float3 b1, b2, b3;
+        get_axes(orientations[j], b1, b2, b3);
+
+        float3 r = ppos - qpos;
+        r = minimum_image(r, box);
+        float3 dF = float3(0.0f);
+        // qIsN3 = false : n5 partner = j (b*), n3 partner = me (a*)
+        _bonded_part(false, r, qtype, b1, b2, b3, ptype, a1, a2, a3, dF, T, params);
+        F += dF;
+    }
+
+    // ---- non-bonded neighbours ----
+    int n_neighs = number_neighs[idx];
+    for(int i = 0; i < n_neighs; i++) {
+        int j = matrix_neighs[i * args.N + idx];
+        if(j == idx || j == pb.n3 || j == pb.n5) continue;
+
+        float3 qpos = poss[j].xyz;
+        int qtype = (int) poss[j].w;
+        float3 r = qpos - ppos;
+        r = minimum_image(r, box);
+
+        float3 b1, b2, b3;
+        get_axes(orientations[j], b1, b2, b3);
+        MetalBonds qb = bonds[j];
+        bool q_is_end = (qb.n3 == -1 || qb.n5 == -1);
+
+        float3 dF = float3(0.0f);
+        _particle_particle_DNA_interaction(r, ptype, a1, a2, a3, qtype, b1, b2, b3,
+                                           p_is_end, q_is_end, dF, T, params);
+        F += dF;
+    }
+
+    // torque -> particle body frame (matches CUDA _vectors_transpose_c_number4_product)
+    float3 Tbody = float3(dot(a1, T), dot(a2, T), dot(a3, T));
+
+    forces[idx].xyz += F;
+    torques[idx].xyz += Tbody;
 }

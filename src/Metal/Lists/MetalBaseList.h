@@ -66,6 +66,14 @@ public:
     // Update requires Metal buffers
 	virtual void update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, id<MTLBuffer> bonds) = 0;
 
+	// Returns true if the neighbour lists must be rebuilt because at least one
+	// particle has moved farther than the Verlet skin since the last rebuild.
+	// The default is conservative (always rebuild); MetalSimpleVerletList
+	// implements the displacement check.
+	virtual bool lists_are_old(id<MTLBuffer> poss, id<MTLBuffer> list_poss) {
+		return true;
+	}
+
 	bool use_edge() {
 		return _use_edge;
 	}

@@ -58,6 +58,7 @@ public:
 
 	void metal_init(int N, m_number rcut, MetalBox *h_metal_box, id<MTLBuffer> d_metal_box, id<MTLDevice> device, id<MTLLibrary> library) override;
 	void update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, id<MTLBuffer> bonds) override;
+	bool lists_are_old(id<MTLBuffer> poss, id<MTLBuffer> list_poss) override;
 	void clean() override;
 
 	void get_settings(input_file &inp) override;

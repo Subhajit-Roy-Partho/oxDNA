@@ -33,12 +33,6 @@ struct DNAInteractionParams {
     float F2_RCLOW[2];
     float F2_RCHIGH[2];
     
-    float F4_THETA_A[13];
-    float F4_THETA_B[13];
-    float F4_THETA_T0[13];
-    float F4_THETA_TS[13];
-    float F4_THETA_TC[13];
-    
     float F5_PHI_A[4];
     float F5_PHI_B[4];
     float F5_PHI_XC[4];
@@ -59,7 +53,10 @@ struct DNAInteractionParams {
     int grooving;
     int use_oxDNA2_coaxial_stacking;
     int use_oxDNA2_FENE;
-    float mbf_fmax;
+    int use_debye_huckel;
+    int use_mbf;
+    float mbf_xmax;
+    float mbf_finf;
 };
 
 MetalDNAInteraction::MetalDNAInteraction() {
@@ -189,12 +186,14 @@ void MetalDNAInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary>
     
     params->grooving = _grooving ? 1 : 0;
     params->use_oxDNA2_coaxial_stacking = _use_oxDNA2_coaxial_stacking ? 1 : 0;
-    params->use_oxDNA2_FENE = this->_use_oxDNA2_FENE;
-    
-    // Copy Max Backbone Force
-    params->mbf_fmax = this->_mbf_fmax;
-    // Note: _mbf_fmax is protected in DNAInteraction. Need to ensure access.
-    // MetalDNAInteraction inherits public DNAInteraction, so it should be fine.
+    params->use_oxDNA2_FENE = this->_use_oxDNA2_FENE ? 1 : 0;
+    params->use_debye_huckel = _use_debye_huckel ? 1 : 0;
+
+    // Max backbone force ("relax"-style FENE cap). The kernel needs xmax/finf,
+    // matching CUDA's _bonded_part.
+    params->use_mbf = this->_use_mbf ? 1 : 0;
+    params->mbf_xmax = this->_mbf_xmax;
+    params->mbf_finf = this->_mbf_finf;
     
     // PSOs
     NSError *error = nil;

@@ -241,6 +241,26 @@ std::vector<int> MetalSimpleVerletList::is_large(id<MTLBuffer> data) {
     return std::vector<int>();
 }
 
+bool MetalSimpleVerletList::lists_are_old(id<MTLBuffer> poss, id<MTLBuffer> list_poss) {
+    // Shared-storage buffers on Apple Silicon: read directly on the host.
+    if(poss == nil || list_poss == nil) return true;
+
+    const m_number4 *p = (const m_number4 *) poss.contents;
+    const m_number4 *lp = (const m_number4 *) list_poss.contents;
+    if(p == nullptr || lp == nullptr) return true;
+
+    const m_number sqr_skin = _sqr_verlet_skin;
+    for(int i = 0; i < _N; i++) {
+        m_number dx = p[i].x - lp[i].x;
+        m_number dy = p[i].y - lp[i].y;
+        m_number dz = p[i].z - lp[i].z;
+        if(dx * dx + dy * dy + dz * dz > sqr_skin) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, id<MTLBuffer> bonds) {
 	_init_cells(poss); // Check if cells need resize
     

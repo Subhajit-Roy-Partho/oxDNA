@@ -583,8 +583,10 @@ void MD_MetalBackend::sim_step() {
         _timer_first_step->pause();
 
         _timer_lists->resume();
-        _metal_list->update(_d_poss, _d_list_poss, _d_bonds);
-        _N_updates++;
+        if(_metal_list->lists_are_old(_d_poss, _d_list_poss)) {
+            _metal_list->update(_d_poss, _d_list_poss, _d_bonds);
+            _N_updates++;
+        }
         _timer_lists->pause();
 
         _timer_forces->resume();
