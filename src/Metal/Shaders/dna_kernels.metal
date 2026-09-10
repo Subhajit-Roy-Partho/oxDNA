@@ -991,3 +991,118 @@ kernel void dna_forces(device m_number4 *poss           [[buffer(0)]],
     forces[idx].xyz += F;
     torques[idx].xyz += Tbody;
 }
+
+// ---------------------------------------------------------------------------
+//  Edge-list force kernels (Metal_list = edge)
+//
+//  Instead of one thread per particle recomputing every non-bonded pair twice
+//  (once from each end), one thread per *edge* computes the pair once and
+//  atomically distributes the force/torque to both partners. Torque is left in
+//  the lab frame here; dna_forces_edge_bonded adds the bonded terms and does
+//  the single lab -> body transform, exactly like the CUDA edge kernels.
+// ---------------------------------------------------------------------------
+kernel void dna_forces_edge_nonbonded(device m_number4 *poss              [[buffer(0)]],
+                                      device m_number4 *orientations      [[buffer(1)]],
+                                      device atomic_float *forces         [[buffer(2)]],
+                                      device atomic_float *torques        [[buffer(3)]],
+                                      device MetalEdgeBond *edge_list     [[buffer(4)]],
+                                      device const int *n_edges           [[buffer(5)]],
+                                      device MetalBonds *bonds            [[buffer(6)]],
+                                      constant DNAInteractionParams &params [[buffer(7)]],
+                                      constant MetalBox &box              [[buffer(8)]],
+                                      uint2 tid [[thread_position_in_grid]]) {
+    int e = tid.x;
+    if(e >= n_edges[0]) return;
+
+    MetalEdgeBond eb = edge_list[e];
+    int pi = eb.from;
+    int qi = eb.to;
+
+    float3 ppos = poss[pi].xyz;
+    float3 qpos = poss[qi].xyz;
+    float3 r = qpos - ppos;
+    r = minimum_image(r, box);
+    if(dot(r, r) > params.sqr_rcut) return;
+
+    int ptype = (int) poss[pi].w;
+    int qtype = (int) poss[qi].w;
+
+    float3 a1, a2, a3; get_axes(orientations[pi], a1, a2, a3);
+    float3 b1, b2, b3; get_axes(orientations[qi], b1, b2, b3);
+
+    MetalBonds pb = bonds[pi];
+    MetalBonds qb = bonds[qi];
+    bool p_is_end = (pb.n3 == -1 || pb.n5 == -1);
+    bool q_is_end = (qb.n3 == -1 || qb.n5 == -1);
+
+    float3 dF = float3(0.0f);
+    float3 dT = float3(0.0f);
+    _particle_particle_DNA_interaction(r, ptype, a1, a2, a3, qtype, b1, b2, b3,
+                                       p_is_end, q_is_end, dF, dT, params);
+
+    // particle p
+    atomic_fetch_add_explicit(&forces[4 * pi + 0], dF.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(&forces[4 * pi + 1], dF.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(&forces[4 * pi + 2], dF.z, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * pi + 0], dT.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * pi + 1], dT.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * pi + 2], dT.z, memory_order_relaxed);
+
+    // particle q: Newton's 3rd law for the force, Allen Eq. 6 for the torque
+    float3 tq = -dT + cross(r, dF);
+    atomic_fetch_add_explicit(&forces[4 * qi + 0], -dF.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(&forces[4 * qi + 1], -dF.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(&forces[4 * qi + 2], -dF.z, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * qi + 0], tq.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * qi + 1], tq.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(&torques[4 * qi + 2], tq.z, memory_order_relaxed);
+}
+
+kernel void dna_forces_edge_bonded(device m_number4 *poss           [[buffer(0)]],
+                                   device m_number4 *orientations   [[buffer(1)]],
+                                   device m_number4 *forces         [[buffer(2)]],
+                                   device m_number4 *torques        [[buffer(3)]],
+                                   device MetalBonds *bonds         [[buffer(4)]],
+                                   constant DNAInteractionParams &params [[buffer(5)]],
+                                   constant MetalBox &box           [[buffer(6)]],
+                                   constant InitStrandArgs &args    [[buffer(7)]],
+                                   uint2 tid [[thread_position_in_grid]]) {
+    int idx = tid.x;
+    if(idx >= args.N) return;
+
+    float3 ppos = poss[idx].xyz;
+    int ptype = (int) poss[idx].w;
+    MetalBonds pb = bonds[idx];
+
+    float3 a1, a2, a3;
+    get_axes(orientations[idx], a1, a2, a3);
+
+    // start from the non-bonded accumulation left by dna_forces_edge_nonbonded
+    float3 F = forces[idx].xyz;
+    float3 T = torques[idx].xyz;
+
+    if(pb.n3 != -1) {
+        int j = pb.n3;
+        int qtype = (int) poss[j].w;
+        float3 b1, b2, b3; get_axes(orientations[j], b1, b2, b3);
+        float3 r = poss[j].xyz - ppos;
+        r = minimum_image(r, box);
+        float3 dF = float3(0.0f);
+        _bonded_part(true, r, ptype, a1, a2, a3, qtype, b1, b2, b3, dF, T, params);
+        F += dF;
+    }
+    if(pb.n5 != -1) {
+        int j = pb.n5;
+        int qtype = (int) poss[j].w;
+        float3 b1, b2, b3; get_axes(orientations[j], b1, b2, b3);
+        float3 r = ppos - poss[j].xyz;
+        r = minimum_image(r, box);
+        float3 dF = float3(0.0f);
+        _bonded_part(false, r, qtype, b1, b2, b3, ptype, a1, a2, a3, dF, T, params);
+        F += dF;
+    }
+
+    float3 Tbody = float3(dot(a1, T), dot(a2, T), dot(a3, T));
+    forces[idx].xyz = F;
+    torques[idx].xyz = Tbody;
+}

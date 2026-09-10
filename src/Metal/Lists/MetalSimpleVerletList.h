@@ -48,6 +48,8 @@ protected:
 	void _compute_N_cells_side(int N_cells_side[3], m_number min_cell_size);
 	int _largest_N_in_cells(id<MTLBuffer> poss, m_number min_cell_size);
 	virtual void _init_cells(id<MTLBuffer> poss=nil);
+	// Assign particles to cells (fill_cells kernel); throws on cell overflow.
+	void _run_fill_cells(id<MTLBuffer> poss);
 
     id<MTLDevice> _device;
     id<MTLLibrary> _library;

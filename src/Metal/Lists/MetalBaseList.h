@@ -43,7 +43,14 @@ public:
 	id<MTLBuffer> d_matrix_neighs = nil;
 	id<MTLBuffer> d_number_neighs = nil;
 	id<MTLBuffer> d_edge_list = nil;
+	// single-int device buffer holding the current edge count (read by the
+	// edge force kernel); host-visible copy in N_edges.
+	id<MTLBuffer> d_n_edges = nil;
 	int N_edges = 0;
+
+	// true for MetalEdgeList: the interaction should dispatch the per-edge
+	// force kernels instead of the per-particle neighbour-matrix kernel.
+	virtual bool is_edge_list() { return false; }
 
 	MetalBaseList() :
 					_use_edge(false),

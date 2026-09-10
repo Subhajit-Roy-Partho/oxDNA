@@ -266,41 +266,25 @@ bool MetalSimpleVerletList::lists_are_old(id<MTLBuffer> poss, id<MTLBuffer> list
     return false;
 }
 
-void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, id<MTLBuffer> bonds) {
-	_init_cells(poss); // Check if cells need resize
-    
+// Assigns every particle to its cell (fill_cells kernel) and throws on a cell
+// overflow. Shared by the verlet and edge list update paths.
+void MetalSimpleVerletList::_run_fill_cells(id<MTLBuffer> poss) {
+    _init_cells(poss); // Check if cells need resize
+
     bool fail = false;
     MetalUtils::copy_to_device(_d_cell_overflow, &fail, 1);
-    
-    // Reset counters
-    // _d_counters_cells is int*
-    // memset via compute or simple blit?
-    // Using blit for zeroing is efficient.
-    // Reset counters
-    // Debug: check positions
-    m_number4 *pdata = (m_number4*) poss.contents;
-    OX_DEBUG("Poss[0]: %f %f %f, Poss[1]: %f %f %f", pdata[0].x, pdata[0].y, pdata[0].z, pdata[1].x, pdata[1].y, pdata[1].z);
-    
-    // Directly memset on host (Shared memory) to be sure
     memset(_d_counters_cells.contents, 0, _N_cells * sizeof(int));
-    
-    OX_DEBUG("FillCells: max_N=%d, N_cells=%d", _max_N_per_cell, _N_cells);
 
     id<MTLCommandQueue> commandQueue = [_device newCommandQueue];
-    id<MTLCommandBuffer> commandBuffer = nil;
-
-    // Fill cells
-    commandBuffer = [commandQueue commandBuffer];
+    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
     id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
-    
+
     [computeEncoder setComputePipelineState:_fill_cells_pso];
     [computeEncoder setBuffer:poss offset:0 atIndex:0];
     [computeEncoder setBuffer:_d_cells offset:0 atIndex:1];
     [computeEncoder setBuffer:_d_counters_cells offset:0 atIndex:2];
     [computeEncoder setBuffer:_d_cell_overflow offset:0 atIndex:3];
-    [computeEncoder setBuffer:_d_cell_overflow offset:0 atIndex:3];
-    // Buffer 4 key removed in kernel, args at 5
-    
+
     struct {
         MetalBox::BoxData box;
         int N_cells_side[3];
@@ -313,25 +297,25 @@ void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, 
     args.N_cells_side[2] = _N_cells_side[2];
     args.max_N_per_cell = _max_N_per_cell;
     args.N = _N;
-    
     [computeEncoder setBytes:&args length:sizeof(args) atIndex:5];
-    
+
     [computeEncoder dispatchThreadgroups:MTLSizeMake(_cells_kernel_cfg.threadgroups_per_grid, 1, 1) threadsPerThreadgroup:MTLSizeMake(_cells_kernel_cfg.threads_per_threadgroup, 1, 1)];
-    
     [computeEncoder endEncoding];
     [commandBuffer commit];
     [commandBuffer waitUntilCompleted];
-    
+
     MetalUtils::copy_from_device(&fail, _d_cell_overflow, 1);
+    if(fail) {
+        throw oxDNAException("A cell contains more than _max_n_per_cell (%d) particles:", _max_N_per_cell);
+    }
+}
 
-	if(fail) {
-		std::string message = Utils::sformat("A cell contains more than _max_n_per_cell (%d) particles:", _max_N_per_cell);
-		throw oxDNAException(message);
-	}
+void MetalSimpleVerletList::update(id<MTLBuffer> poss, id<MTLBuffer> list_poss, id<MTLBuffer> bonds) {
+    _run_fill_cells(poss);
 
-    // Update neigh list
-    commandBuffer = [commandQueue commandBuffer];
-    computeEncoder = [commandBuffer computeCommandEncoder];
+    id<MTLCommandQueue> commandQueue = [_device newCommandQueue];
+    id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
+    id<MTLComputeCommandEncoder> computeEncoder = [commandBuffer computeCommandEncoder];
     
 	if(_use_edge) {
 		// edge_update_neigh_list

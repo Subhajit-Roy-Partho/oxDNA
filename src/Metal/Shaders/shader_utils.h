@@ -40,6 +40,14 @@ struct MetalBonds {
     int n5;
 };
 
+/**
+ * @brief One entry of the flat edge list (Metal_list = edge).
+ */
+struct MetalEdgeBond {
+    int from;
+    int to;
+};
+
 // Helper functions for Box
 inline m_number3 minimum_image(m_number3 r, constant MetalBox &box) {
     m_number3 result = r;

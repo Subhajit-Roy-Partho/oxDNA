@@ -169,6 +169,68 @@ kernel void simple_update_neigh_list(device m_number4 *poss [[buffer(0)]],
     number_neighs[idx] = N_neighs;
 }
 
+struct EdgeFillArgs {
+    int N_cells_side[3];
+    int max_N_per_cell;
+    int N;
+    m_number sqr_rverlet;
+    int max_edges;
+};
+
+/**
+ * @brief Build the flat edge list: one thread per particle appends its
+ * half-list neighbours (m < idx) as (idx, m) pairs using a single atomic
+ * global counter. Cells must already be filled.
+ */
+kernel void edge_fill(device m_number4 *poss            [[buffer(0)]],
+                      device m_number4 *list_poss       [[buffer(1)]],
+                      device int *cells                 [[buffer(2)]],
+                      constant int *counters_cells      [[buffer(3)]],
+                      device MetalEdgeBond *edge_list   [[buffer(4)]],
+                      device atomic_int *edge_count     [[buffer(5)]],
+                      device bool *edge_overflow        [[buffer(6)]],
+                      device MetalBonds *bonds          [[buffer(7)]],
+                      constant MetalBox &box            [[buffer(8)]],
+                      constant EdgeFillArgs &args       [[buffer(9)]],
+                      uint2 tid [[thread_position_in_grid]]) {
+    int idx = tid.x;
+    if(idx >= args.N) return;
+
+    m_number4 r = poss[idx];
+    MetalBonds b = bonds[idx];
+    int3 spl = compute_cell_spl_idx(args.N_cells_side, r, box);
+
+    for(int dz = -1; dz <= 1; dz++) {
+        for(int dy = -1; dy <= 1; dy++) {
+            for(int dx = -1; dx <= 1; dx++) {
+                int nx = (spl.x + args.N_cells_side[0] + dx) % args.N_cells_side[0];
+                int ny = (spl.y + args.N_cells_side[1] + dy) % args.N_cells_side[1];
+                int nz = (spl.z + args.N_cells_side[2] + dz) % args.N_cells_side[2];
+                int cell_index = (nz * args.N_cells_side[1] + ny) * args.N_cells_side[0] + nx;
+
+                int size = counters_cells[cell_index];
+                for(int i = 0; i < size; i++) {
+                    int m = cells[cell_index * args.max_N_per_cell + i];
+                    if(m >= idx || b.n3 == m || b.n5 == m) continue;   // half list
+
+                    if(distance_sqr(r.xyz, poss[m].xyz, box) < args.sqr_rverlet) {
+                        int e = atomic_fetch_add_explicit(edge_count, 1, memory_order_relaxed);
+                        if(e < args.max_edges) {
+                            edge_list[e].from = idx;
+                            edge_list[e].to = m;
+                        }
+                        else {
+                            *edge_overflow = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    list_poss[idx] = r;
+}
+
 kernel void check_coord_magnitude(device m_number4 *poss [[buffer(0)]],
                                   device bool *is_large [[buffer(1)]],
                                   uint2 tid [[thread_position_in_grid]]) {

@@ -74,6 +74,7 @@ IF(APPLE)
         Backends/MD_MetalBackend.mm
         Lists/MetalNoList.mm
         Lists/MetalSimpleVerletList.mm
+        Lists/MetalEdgeList.mm
         Lists/MetalListFactory.mm
         Interactions/MetalBaseInteraction.mm
         Interactions/MetalCPUForceFallback.mm

@@ -206,7 +206,16 @@ void MetalDNAInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary>
     if(!_dna_forces_pso) {
         throw oxDNAException("Failed creating dna_forces pipeline: %s", [[error localizedDescription] UTF8String]);
     }
-    
+
+    _dna_forces_edge_nonbonded_pso = [_device newComputePipelineStateWithFunction:[_library newFunctionWithName:@"dna_forces_edge_nonbonded"] error:&error];
+    if(!_dna_forces_edge_nonbonded_pso) {
+        throw oxDNAException("Failed creating dna_forces_edge_nonbonded pipeline: %s", [[error localizedDescription] UTF8String]);
+    }
+    _dna_forces_edge_bonded_pso = [_device newComputePipelineStateWithFunction:[_library newFunctionWithName:@"dna_forces_edge_bonded"] error:&error];
+    if(!_dna_forces_edge_bonded_pso) {
+        throw oxDNAException("Failed creating dna_forces_edge_bonded pipeline: %s", [[error localizedDescription] UTF8String]);
+    }
+
     _init_DNA_strand_ends_pso = [_device newComputePipelineStateWithFunction:[_library newFunctionWithName:@"init_DNA_strand_ends"] error:&error];
     if(!_init_DNA_strand_ends_pso) {
         throw oxDNAException("Failed creating init_DNA_strand_ends pipeline: %s", [[error localizedDescription] UTF8String]);
@@ -295,7 +304,43 @@ void MetalDNAInteraction::process_dna_force_kernel(id<MTLCommandBuffer> commandB
                                                    id<MTLBuffer> bonds,
                                                    id<MTLBuffer> metal_box,
                                                    id<MTLBuffer> energies) {
+    const MTLSize tpb = MTLSizeMake(128, 1, 1); // 128 measured fastest (register-bound)
+
     @autoreleasepool {
+        if(list->is_edge_list()) {
+            // one thread per edge: non-bonded pair computed once, atomically
+            // scattered to both partners (lab-frame torque)
+            id<MTLComputeCommandEncoder> nb = [commandBuffer computeCommandEncoder];
+            [nb setComputePipelineState:_dna_forces_edge_nonbonded_pso];
+            [nb setBuffer:poss offset:0 atIndex:0];
+            [nb setBuffer:orientations offset:0 atIndex:1];
+            [nb setBuffer:forces offset:0 atIndex:2];
+            [nb setBuffer:torques offset:0 atIndex:3];
+            [nb setBuffer:list->d_edge_list offset:0 atIndex:4];
+            [nb setBuffer:list->d_n_edges offset:0 atIndex:5];
+            [nb setBuffer:bonds offset:0 atIndex:6];
+            [nb setBuffer:_d_dna_params offset:0 atIndex:7];
+            [nb setBuffer:metal_box offset:0 atIndex:8];
+            int n_edges = (list->N_edges > 0) ? list->N_edges : 1;
+            [nb dispatchThreads:MTLSizeMake(n_edges, 1, 1) threadsPerThreadgroup:tpb];
+            [nb endEncoding];
+
+            // one thread per particle: add bonded terms, transform torque to body frame
+            id<MTLComputeCommandEncoder> bd = [commandBuffer computeCommandEncoder];
+            [bd setComputePipelineState:_dna_forces_edge_bonded_pso];
+            [bd setBuffer:poss offset:0 atIndex:0];
+            [bd setBuffer:orientations offset:0 atIndex:1];
+            [bd setBuffer:forces offset:0 atIndex:2];
+            [bd setBuffer:torques offset:0 atIndex:3];
+            [bd setBuffer:bonds offset:0 atIndex:4];
+            [bd setBuffer:_d_dna_params offset:0 atIndex:5];
+            [bd setBuffer:metal_box offset:0 atIndex:6];
+            [bd setBuffer:_d_init_args offset:0 atIndex:7];
+            [bd dispatchThreads:MTLSizeMake(_N, 1, 1) threadsPerThreadgroup:tpb];
+            [bd endEncoding];
+            return;
+        }
+
         id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
 
         [encoder setComputePipelineState:_dna_forces_pso];
@@ -310,18 +355,13 @@ void MetalDNAInteraction::process_dna_force_kernel(id<MTLCommandBuffer> commandB
         [encoder setBuffer:_d_dna_params offset:0 atIndex:7];
         [encoder setBuffer:metal_box offset:0 atIndex:8];
         [encoder setBuffer:_d_init_args offset:0 atIndex:9];
-        
+
         // Energy buffer at index 10
         if(energies) {
              [encoder setBuffer:energies offset:0 atIndex:10];
         }
-        
-        // Check grid size
-        int N = _N; // from BaseInteraction
-        MTLSize gridSize = MTLSizeMake(N, 1, 1);
-        MTLSize threadgroupSize = MTLSizeMake(128, 1, 1); // 128 measured fastest for the DNA force kernel on M4 (register-bound)
 
-        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
+        [encoder dispatchThreads:MTLSizeMake(_N, 1, 1) threadsPerThreadgroup:tpb];
         [encoder endEncoding];
     }
 }
