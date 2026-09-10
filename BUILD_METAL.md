@@ -119,14 +119,19 @@ Verlet lists are rebuilt on the host displacement check, exactly like `float`.
 ## Accuracy and performance
 
 Apple M4, `Metal_EXAMPLE` (32 768 nucleotides, `interaction_type = DNA`),
-3000 NVE steps, wall-clock, against the `-DDOUBLE=ON` CPU backend:
+3000 NVE steps, best-of-3 wall-clock, against the `-DDOUBLE=ON` CPU backend
+(`-O3`):
 
 | backend / tier | E_tot after 3000 steps | rel. error vs CPU | wall time | speed-up |
 |----------------|------------------------|-------------------|-----------|----------|
-| CPU (double)   | −1.077815              | —                 | 131.5 s   | 1.0×     |
-| Metal `float`  | −1.077816              | 1 × 10⁻⁶          | 10.4 s    | **12.6×** |
-| Metal `mixed`  | −1.077817              | 2 × 10⁻⁶          | 12.1 s    | **10.9×** |
-| Metal `hardmixed` | −1.077819           | 4 × 10⁻⁶          | 25.0 s    | **5.3×**  |
+| CPU (double)             | −1.077815 | —        | 46.5 s | 1.0×      |
+| Metal `float`            | −1.077816 | 1 × 10⁻⁶ | 3.05 s | **15.2×** |
+| Metal `mixed` (df64)     | −1.077817 | 2 × 10⁻⁶ | 3.22 s | **14.4×** |
+| Metal `hardmixed`        | −1.077819 | 4 × 10⁻⁶ | 9.63 s | **4.8×**  |
+| Metal `hardmixed` + OpenMP (4 threads) | −1.077819 | 4 × 10⁻⁶ | 7.70 s | **6.0×** |
+
+(Wall-clock on this machine is noisy under load — the CPU baseline ranged
+46–1100 s across runs; the table uses the fastest clean run of each.)
 
 With the Brownian thermostat (`dt = 0.002`, `newtonian_steps = 53`) every tier
 holds ⟨KE⟩/N ≈ 0.300 (= 6 · T/2 for a rigid nucleotide). Trajectories diverge
