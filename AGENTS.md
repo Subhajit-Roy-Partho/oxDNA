@@ -5,9 +5,9 @@
 
 ## Current Status
 
-**Last Updated:** 2026-09-09 18:40
-**Last Session Summary:** _Precision tiers + edge list + CPU external forces done and pushed. Optimized DNA2 (threadgroup 128, sqr_rcut skin cull), fixed use_edge crash. `Metal_list = edge` gives ~20% over verlet on DNA2. Running the ErikPoppleton/oxDNA_performance benchmark matrix (128 – 524288 nuc × {CPU, float/mixed × verlet/edge, hardmixed}) for the plots._
-**Resume From:** _Benchmark matrix running (scratchpad/bench_metal.sh → results.csv, plot_bench.py). Then commit benchmark script + plots. Open: #11 CPU OpenMP; #14 RNA/LJ native kernels; edge-kernel micro-opt (precompute per-particle axes)._
+**Last Updated:** 2026-09-09 19:10
+**Last Session Summary:** _Precision tiers + `Metal_list = edge` + CPU external forces done, validated (validator 7/7, examples CUDA_EXAMPLE/GROOVING/PSEUDOKNOT/TRAPS all match CPU), benchmarked on the oxDNA_performance systems (128–524288 nt) with plots, all pushed to origin/metal (`d020973f`)._
+**Resume From:** _Everything requested is done. Open: #11 CPU force-loop OpenMP (core refactor); #14 native RNA/LJ/TEP kernels; #17 edge-kernel axes precompute (~10%); #15 GPU barostat/stress tensor/external forces._
 
 ---
 
@@ -15,7 +15,6 @@
 
 | ID | Task | Status | Started |
 |----|------|--------|---------|
-| #16 | Run ErikPoppleton/oxDNA_performance benchmarks (origami-ish duplex boxes 128–524288 nuc) across precision tiers + verlet/edge + CPU; ms/step, total time, plots | 🔄 In Progress | 2026-09-09 |
 | #11 | OpenMP for the **CPU** MD/MC force loop — deferred (core refactor: stateful `_computed_r`/`_is_infinite`, half-list + 3rd-law races). Metal-side OpenMP done. | ⏸️ Deferred | 2026-09-09 |
 | #14 | Native RNA / LJ / patchy / TEP GPU force kernels (CPU-fallback only today) | ⏳ Pending | 2026-09-09 |
 | #15 | GPU barostat/NPT, stress tensor, external forces on GPU (currently CPU each step), particle sorting | ⏳ Pending | 2026-09-09 |
@@ -41,7 +40,8 @@
 | #13 | Documentation — `BUILD_METAL.md` rewrite (precision tiers, df64, benchmarks, OpenMP status), `src/Metal/README.md` refresh | 2026-09-09 |
 | #18 | CPU external forces for native/mixed/hardmixed paths (traps/walls were silently dropped); TRAPS example now matches CPU. Commit `ac22deb7`. | 2026-09-09 |
 | #19 | DNA2 kernel tuning: threadgroup 64→128, `sqr_rcut` skin-shell cull; `use_edge` accepted-and-ignored (was crashing examples/CUDA_EXAMPLE). Commit `ac22deb7`. | 2026-09-09 |
-| #20 | `Metal_list = edge` — flat pair list + per-edge DNA force kernel (atomic scatter). ~20% over verlet on DNA2. Commit `9686df33`. | 2026-09-09 |
+| #20 | `Metal_list = edge` — flat pair list + per-edge DNA force kernel (atomic scatter). 1.2–1.4x over verlet (grows with size). Commit `9686df33`. | 2026-09-09 |
+| #16 | ErikPoppleton/oxDNA_performance benchmark matrix (128–524288 nt × CPU / float·mixed × verlet·edge / hardmixed) + plots. `benchmarks/` in repo. float+edge vs CPU: ~15x @ 8k nt, ~34x @ 65k nt. Commit `d020973f`. | 2026-09-09 |
 
 ---
 
