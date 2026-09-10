@@ -60,6 +60,7 @@ Minimal input file:
 backend = Metal
 Metal_avoid_cpu_calculations = 1     # 1 = native GPU kernels, 0 = CPU force fallback
 backend_precision = float            # float | mixed | hardmixed  (see below)
+Metal_list = edge                    # verlet (default) | edge | no  (see below)
 
 sim_type = MD
 interaction_type = DNA               # or DNA2
@@ -85,6 +86,18 @@ energy_file = energy.dat
   normal CPU interaction computes the forces, and the result is copied back.
   Physically identical to the CPU backend (≈1e-6 relative energy error) but no
   faster. This is the only correct option for RNA/LJ/patchy/TEP today.
+
+### `Metal_list`
+
+- `verlet` (default) — one thread per particle, per-particle neighbour matrix.
+  Each non-bonded pair is evaluated twice (once from each end).
+- `edge` — a flat list of unique `(from > to)` pairs; the DNA force kernel runs
+  one thread per edge and evaluates each non-bonded pair **once**, atomically
+  scattering the result to both partners (bonded terms in a second per-particle
+  pass). ~20 % faster than `verlet` for DNA2 on a duplex box; the analogue of
+  CUDA's `use_edge` / `CUDA_list = edge`. Only implemented for DNA/DNA2 native
+  kernels — RNA/LJ/… fall back to `verlet`.
+- `no` — all pairs, no cells (tiny systems / debugging).
 
 ### `backend_precision`
 

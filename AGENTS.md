@@ -5,9 +5,9 @@
 
 ## Current Status
 
-**Last Updated:** 2026-09-09 17:30
-**Last Session Summary:** _Metal `float`/`mixed`/`hardmixed` precision tiers done, validated (E match 1e-6/2e-6/4e-6), benchmarked (15.2× / 14.4× / 4.8×, 6.0× with OpenMP) and documented. CPU-backend force-loop OpenMP investigated and documented as a separate project (needs core refactor). All pushed to origin/metal._
-**Resume From:** _All requested tasks addressed. Open items: #11 CPU force-loop OpenMP (needs core refactor — see Session Log); native RNA/LJ/TEP kernels; barostat/stress tensor/external forces on GPU._
+**Last Updated:** 2026-09-09 18:40
+**Last Session Summary:** _Precision tiers + edge list + CPU external forces done and pushed. Optimized DNA2 (threadgroup 128, sqr_rcut skin cull), fixed use_edge crash. `Metal_list = edge` gives ~20% over verlet on DNA2. Running the ErikPoppleton/oxDNA_performance benchmark matrix (128 – 524288 nuc × {CPU, float/mixed × verlet/edge, hardmixed}) for the plots._
+**Resume From:** _Benchmark matrix running (scratchpad/bench_metal.sh → results.csv, plot_bench.py). Then commit benchmark script + plots. Open: #11 CPU OpenMP; #14 RNA/LJ native kernels; edge-kernel micro-opt (precompute per-particle axes)._
 
 ---
 
@@ -15,9 +15,11 @@
 
 | ID | Task | Status | Started |
 |----|------|--------|---------|
-| #11 | OpenMP for the **CPU** MD/MC force loop — deferred. Blocked by core architecture (stateful `BaseInteraction::_computed_r` / `_is_infinite`; half neighbour lists + Newton's-3rd-law races on `q->force`). Metal-side OpenMP (`hardmixed`, buffer packing, sync-backs) is done. A correct implementation needs thread-local interaction scratch + per-thread force buffers or cell colouring — a dedicated task, low priority since the Metal `float`/`mixed` tiers already give 15×. | ⏸️ Deferred | 2026-09-09 |
-| #14 | Native RNA / LJ / patchy / TEP GPU force kernels (currently CPU-fallback only) | ⏳ Pending | 2026-09-09 |
-| #15 | GPU barostat / NPT, stress tensor, external forces; particle sorting for list locality | ⏳ Pending | 2026-09-09 |
+| #16 | Run ErikPoppleton/oxDNA_performance benchmarks (origami-ish duplex boxes 128–524288 nuc) across precision tiers + verlet/edge + CPU; ms/step, total time, plots | 🔄 In Progress | 2026-09-09 |
+| #11 | OpenMP for the **CPU** MD/MC force loop — deferred (core refactor: stateful `_computed_r`/`_is_infinite`, half-list + 3rd-law races). Metal-side OpenMP done. | ⏸️ Deferred | 2026-09-09 |
+| #14 | Native RNA / LJ / patchy / TEP GPU force kernels (CPU-fallback only today) | ⏳ Pending | 2026-09-09 |
+| #15 | GPU barostat/NPT, stress tensor, external forces on GPU (currently CPU each step), particle sorting | ⏳ Pending | 2026-09-09 |
+| #17 | Edge-kernel micro-opt: precompute per-particle axes once/step (get_axes is ~10-20% of per-edge cost, recomputed in both edge kernels) | ⏳ Pending | 2026-09-09 |
 
 ---
 
@@ -37,6 +39,9 @@
 | #10 | Phase D: `mixed` tier — `src/Metal/Shaders/df64.h` double-float library + `first_step_mixed`/`second_step_mixed`/`mixed_sync_df_vels` kernels | 2026-09-09 |
 | #12 | Energy validation for all three tiers (NVE + Brownian thermostat) vs CPU backend; regression run of `validate_metal_forcefields.py` (fallback 7/7, native DNA/DNA2 pass); best-of-3 benchmark table | 2026-09-09 |
 | #13 | Documentation — `BUILD_METAL.md` rewrite (precision tiers, df64, benchmarks, OpenMP status), `src/Metal/README.md` refresh | 2026-09-09 |
+| #18 | CPU external forces for native/mixed/hardmixed paths (traps/walls were silently dropped); TRAPS example now matches CPU. Commit `ac22deb7`. | 2026-09-09 |
+| #19 | DNA2 kernel tuning: threadgroup 64→128, `sqr_rcut` skin-shell cull; `use_edge` accepted-and-ignored (was crashing examples/CUDA_EXAMPLE). Commit `ac22deb7`. | 2026-09-09 |
+| #20 | `Metal_list = edge` — flat pair list + per-edge DNA force kernel (atomic scatter). ~20% over verlet on DNA2. Commit `9686df33`. | 2026-09-09 |
 
 ---
 
