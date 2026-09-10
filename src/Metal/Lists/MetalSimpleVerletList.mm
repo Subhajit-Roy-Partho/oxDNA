@@ -48,10 +48,15 @@ void MetalSimpleVerletList::get_settings(input_file &inp) {
 	getInputNumber(&inp, "verlet_skin", &_verlet_skin, 1);
 	getInputFloat(&inp, "max_density_multiplier", &_max_density_multiplier, 0);
     OX_LOG(Logger::LOG_INFO, "MetalList: max_density_multiplier set to %f", _max_density_multiplier);
-	getInputBool(&inp, "use_edge", &_use_edge, 0);
-	if(_use_edge) {
-		OX_LOG(Logger::LOG_INFO, "Using edge-based approach");
+	bool want_edge = false;
+	getInputBool(&inp, "use_edge", &want_edge, 0);
+	if(want_edge) {
+		// use_edge is a CUDA neighbour-list layout optimisation. The Metal DNA
+		// kernel uses the plain neighbour matrix and the edge kernels are not
+		// implemented, so ignore the key instead of crashing on a nil pipeline.
+		OX_LOG(Logger::LOG_WARNING, "use_edge is not supported by the Metal backend and will be ignored");
 	}
+	_use_edge = false;
 }
 
 int MetalSimpleVerletList::_largest_N_in_cells(id<MTLBuffer> poss, m_number min_cell_size) {

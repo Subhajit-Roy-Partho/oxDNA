@@ -31,17 +31,15 @@ void MetalBaseInteraction::get_metal_settings(input_file &inp) {
 		_update_st = true;
 	}
 
-	getInputBool(&inp, "use_edge", &_use_edge, 0);
-	if(_use_edge) {
-		if(!_edge_compatible) {
-			throw oxDNAException("The selected Metal interaction is not compatible with 'use_edge = true'");
-		}
-
-		getInputInt(&inp, "edge_n_forces", &_n_forces, 0);
-		if(_n_forces < 1) {
-			throw oxDNAException("edge_n_forces must be > 0");
-		}
+	// use_edge / edge_n_forces are CUDA-only optimisations. The Metal DNA kernel
+	// computes forces per particle from the neighbour matrix directly, so accept
+	// the keys for input-file compatibility but ignore them.
+	bool want_edge = false;
+	getInputBool(&inp, "use_edge", &want_edge, 0);
+	if(want_edge) {
+		OX_LOG(Logger::LOG_WARNING, "use_edge is a CUDA-only option and is ignored by the Metal backend");
 	}
+	_use_edge = false;
 }
 
 void MetalBaseInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary> library) {

@@ -57,6 +57,7 @@ struct DNAInteractionParams {
     int use_mbf;
     float mbf_xmax;
     float mbf_finf;
+    float sqr_rcut;
 };
 
 MetalDNAInteraction::MetalDNAInteraction() {
@@ -194,6 +195,10 @@ void MetalDNAInteraction::metal_init(int N, id<MTLDevice> device, id<MTLLibrary>
     params->use_mbf = this->_use_mbf ? 1 : 0;
     params->mbf_xmax = this->_mbf_xmax;
     params->mbf_finf = this->_mbf_finf;
+
+    // COM cutoff^2 (after the Debye-Huckel block may have grown _rcut). The
+    // kernel uses this to skip Verlet-list entries that sit in the skin shell.
+    params->sqr_rcut = (float) this->_sqr_rcut;
     
     // PSOs
     NSError *error = nil;
@@ -314,7 +319,7 @@ void MetalDNAInteraction::process_dna_force_kernel(id<MTLCommandBuffer> commandB
         // Check grid size
         int N = _N; // from BaseInteraction
         MTLSize gridSize = MTLSizeMake(N, 1, 1);
-        MTLSize threadgroupSize = MTLSizeMake(64, 1, 1); // Tune this
+        MTLSize threadgroupSize = MTLSizeMake(128, 1, 1); // 128 measured fastest for the DNA force kernel on M4 (register-bound)
 
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadgroupSize];
         [encoder endEncoding];

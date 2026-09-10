@@ -155,6 +155,15 @@ protected:
     virtual void _sync_forces_torques_from_gpu();
     virtual void _sync_vels_Ls_from_gpu();
 
+    /// true when any particle carries an external force (trap, wall, ...).
+    bool _any_ext_forces = false;
+    /// Native/mixed path: sync positions/orientations out of the GPU buffers,
+    /// evaluate the CPU external forces and add them into _d_forces/_d_torques.
+    virtual void _apply_cpu_external_forces_to_gpu();
+    /// CPU-integration path: add the CPU external forces on top of whatever is
+    /// already in p->force / p->torque (positions are already current on the CPU).
+    virtual void _add_external_forces_to_particles();
+
 public:
     MD_MetalBackend();
     virtual ~MD_MetalBackend();

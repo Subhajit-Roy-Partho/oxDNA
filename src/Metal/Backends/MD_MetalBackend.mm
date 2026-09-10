@@ -7,6 +7,8 @@
 
 #include "../../Utilities/ConfigInfo.h"
 #include "../../Utilities/oxDNAException.h"
+#include "../../Forces/BaseForce.h"
+#include "../../Boxes/BaseBox.h"
 #include "../Interactions/MetalInteractionFactory.h"
 #include "../Lists/MetalListFactory.h"
 #include "../Thermostats/MetalThermostatFactory.h"
@@ -304,6 +306,20 @@ void MD_MetalBackend::init() {
                                            _d_bonds,
                                            _d_metal_box,
                                            _d_energies);
+
+        _any_ext_forces = false;
+        for(auto p : _particles) {
+            if(!p->ext_forces.empty()) { _any_ext_forces = true; break; }
+        }
+        if(_any_ext_forces) {
+            // Fold the external forces into the initial force buffer so the very
+            // first half-kick already sees them. The CPU fallback path applies
+            // them itself (via BaseParticle::set_initial_forces).
+            if(!_metal_interaction->use_cpu_fallback()) {
+                _apply_cpu_external_forces_to_gpu();
+            }
+            OX_LOG(Logger::LOG_INFO, "Metal: %d-particle system has external forces; they are evaluated on the CPU each step", _N);
+        }
 
         if(_metal_interaction->use_cpu_fallback()) {
             OX_LOG(Logger::LOG_INFO, "Metal interaction mode: CPU fallback (Metal_avoid_cpu_calculations = 0)");
@@ -757,6 +773,78 @@ void MD_MetalBackend::_sync_vels_Ls_from_gpu() {
     }
 }
 
+// Evaluate the CPU external forces and torques for every particle that carries
+// one and add them onto p->force / p->torque (the torque converted to the body
+// frame, exactly like BaseParticle::set_initial_forces). Positions must already
+// be current on the CPU. Kept serial: a force applied to "particle = -1" is a
+// single shared object and set_current_particle() mutates it.
+void MD_MetalBackend::_add_external_forces_to_particles() {
+    if(!_any_ext_forces) return;
+    const llint step = current_step();
+    for(int i = 0; i < _N; i++) {
+        BaseParticle *p = _particles[i];
+        if(p->ext_forces.empty()) continue;
+        LR_vector abs_pos = _box->get_abs_pos(p);
+        LR_vector fe(0., 0., 0.), te(0., 0., 0.);
+        for(auto ef : p->ext_forces) {
+            ef->set_current_particle(p);
+            fe += ef->force(step, abs_pos);
+            if(p->is_rigid_body()) {
+                te += ef->torque(step, abs_pos);
+            }
+        }
+        p->force += fe;
+        if(p->is_rigid_body()) {
+            p->torque += p->orientationT * te;
+        }
+    }
+}
+
+// Native / mixed path: the whole step runs on the GPU, so first bring every
+// particle's position/orientation in from the shared buffers (partner-dependent
+// forces such as mutual traps need the current coordinates), then evaluate the
+// external forces and add them straight into the shared force/torque buffers.
+void MD_MetalBackend::_apply_cpu_external_forces_to_gpu() {
+    if(!_any_ext_forces) return;
+
+    const m_number4 *poss = (const m_number4 *) _d_poss.contents;
+    const m_quat *orient = (const m_quat *) _d_orientations.contents;
+    m_number4 *forces = (m_number4 *) _d_forces.contents;
+    m_number4 *torques = (m_number4 *) _d_torques.contents;
+
+    for(int i = 0; i < _N; i++) {
+        BaseParticle *p = _particles[i];
+        p->pos = LR_vector(poss[i].x, poss[i].y, poss[i].z);
+        p->orientation = _orientation_from_quat(orient[i]);
+        p->orientationT = p->orientation.get_transpose();
+    }
+
+    const llint step = current_step();
+    for(int i = 0; i < _N; i++) {
+        BaseParticle *p = _particles[i];
+        if(p->ext_forces.empty()) continue;
+
+        LR_vector abs_pos = _box->get_abs_pos(p);
+        LR_vector fe(0., 0., 0.), te(0., 0., 0.);
+        for(auto ef : p->ext_forces) {
+            ef->set_current_particle(p);
+            fe += ef->force(step, abs_pos);
+            if(p->is_rigid_body()) {
+                te += ef->torque(step, abs_pos);
+            }
+        }
+        forces[i].x += (m_number) fe.x;
+        forces[i].y += (m_number) fe.y;
+        forces[i].z += (m_number) fe.z;
+        if(p->is_rigid_body()) {
+            LR_vector tb = p->orientationT * te;
+            torques[i].x += (m_number) tb.x;
+            torques[i].y += (m_number) tb.y;
+            torques[i].z += (m_number) tb.z;
+        }
+    }
+}
+
 void MD_MetalBackend::sim_step() {
     _mytimer->resume();
 
@@ -873,9 +961,11 @@ void MD_MetalBackend::sim_step() {
 
         // With GPU force evaluation the CPU particle objects still hold last
         // step's force, so pull the freshly computed ones back before the
-        // second half-kick. (The CPU fallback writes p->force directly.)
+        // second half-kick. (The CPU fallback writes p->force directly and
+        // applies external forces itself in MetalCPUForceFallback.)
         if(gpu_forces_cpu_integration) {
             _sync_forces_torques_from_gpu();
+            _add_external_forces_to_particles();
         }
 
         // Second half-kick in native double. Per-particle independent.
@@ -914,6 +1004,7 @@ void MD_MetalBackend::sim_step() {
         const bool use_mixed = (_precision == METAL_PREC_MIXED);
         _timer_forces->resume();
         @autoreleasepool {
+            // First half-kick + zero + DNA forces.
             id<MTLCommandBuffer> cb = [_command_queue commandBuffer];
 
             if(use_mixed) {
@@ -926,6 +1017,17 @@ void MD_MetalBackend::sim_step() {
 
             _metal_interaction->encode_forces(cb, _metal_list, _d_poss, _d_orientations,
                                               _d_forces, _d_torques, _d_bonds, _d_metal_box, _d_energies);
+
+            if(_any_ext_forces) {
+                // Need the DNA forces on the GPU before we can add the CPU
+                // external forces, so this step takes two submissions.
+                [cb commit];
+                [cb waitUntilCompleted];
+
+                _apply_cpu_external_forces_to_gpu();
+
+                cb = [_command_queue commandBuffer];
+            }
 
             if(use_mixed) {
                 _encode_second_step_mixed(cb);

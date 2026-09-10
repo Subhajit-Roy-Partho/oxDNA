@@ -221,6 +221,7 @@ struct DNAInteractionParams {
     int   use_mbf;
     float mbf_xmax;
     float mbf_finf;
+    float sqr_rcut;   // COM cutoff^2: beyond this no term contributes
 };
 
 struct InitStrandArgs {
@@ -968,6 +969,10 @@ kernel void dna_forces(device m_number4 *poss           [[buffer(0)]],
         int qtype = (int) poss[j].w;
         float3 r = qpos - ppos;
         r = minimum_image(r, box);
+
+        // The Verlet list carries a skin margin; skip pairs that are beyond the
+        // true interaction cutoff this step. (Matches the CPU pair filter.)
+        if(dot(r, r) > params.sqr_rcut) continue;
 
         float3 b1, b2, b3;
         get_axes(orientations[j], b1, b2, b3);

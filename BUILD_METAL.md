@@ -6,12 +6,14 @@ Verlet-list build and the velocity-Verlet integration all run on the GPU.
 
 - **Working today:** MD with `interaction_type = DNA` and `DNA2` (oxDNA1 and
   oxDNA2), including hydrogen bonding, stacking, cross-/coaxial stacking,
-  excluded volume, FENE with the `max_backbone_force` cap, and Debye-Hückel.
-  The Brownian (`brownian` / `john`) thermostat.
+  excluded volume, FENE with the `max_backbone_force` cap, Debye-Hückel, and
+  major/minor grooving. The Brownian (`brownian` / `john`) thermostat.
+  External forces (`external_forces = 1`: traps, walls, repulsion planes, …)
+  are evaluated on the CPU each step and folded into the GPU force buffer.
 - **CPU fallback:** every other interaction (RNA, LJ, patchy, TEP, …) runs
   through a CPU force fallback — correct but not faster than the CPU backend.
-- **Not ported:** MC/VMMC, barostat/NPT, FFS, external forces on the GPU,
-  the stress tensor.
+- **Not ported:** MC/VMMC, barostat/NPT, FFS, the stress tensor, and the
+  `use_edge` neighbour-list layout (the key is accepted and ignored).
 
 ---
 
