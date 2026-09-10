@@ -79,7 +79,8 @@ void CUDABaseInteraction::_sum_edge_forces_torques(c_number4 *d_forces, c_number
 void CUDABaseInteraction::get_cuda_settings(input_file &inp) {
 	int update_st_every = 0;
 	getInputInt(&inp, "CUDA_update_stress_tensor_every", &update_st_every, 0);
-	if(update_st_every > 0) {
+	getInputBool(&inp, "CUDA_update_particle_stress_tensor", &_update_particle_st, 0);
+	if(update_st_every > 0 || _update_particle_st) {
 		_update_st = true;
 	}
 
@@ -94,6 +95,9 @@ void CUDABaseInteraction::get_cuda_settings(input_file &inp) {
 			throw oxDNAException("edge_n_forces must be > 0");
 		}
 	}
+
+	// note that the same key is read independently by BaseInteraction
+	getInputBool(&inp, "stress_tensor_no_kinetic_part", &_st_no_kinetic_part, 0);
 }
 
 void CUDABaseInteraction::cuda_init(int N) {
@@ -134,10 +138,49 @@ StressTensor CUDABaseInteraction::CPU_stress_tensor(c_number4 *vels) {
 	thrust::device_ptr<CUDAStressTensor> t_st = thrust::device_pointer_cast(_d_st);
 	CUDAStressTensor st_sum = thrust::reduce(t_st, t_st + _N, CUDAStressTensor());
 
-	thrust::device_ptr<c_number4> t_vels = thrust::device_pointer_cast(vels);
-	st_sum += thrust::transform_reduce(t_vels, t_vels + _N, vel_to_st(), CUDAStressTensor(), thrust::plus<CUDAStressTensor>());
+	if(!_st_no_kinetic_part) {
+		thrust::device_ptr<c_number4> t_vels = thrust::device_pointer_cast(vels);
+		st_sum += thrust::transform_reduce(t_vels, t_vels + _N, vel_to_st(), CUDAStressTensor(), thrust::plus<CUDAStressTensor>());
+	}
 
 	return st_sum.as_StressTensor();
+}
+
+std::vector<StressTensor> CUDABaseInteraction::CPU_particle_stress_tensors(c_number4 *vels) {
+	if(_d_st == nullptr) {
+		throw oxDNAException("The GPU stress tensor buffer has not been initialised");
+	}
+
+	std::vector<CUDAStressTensor> h_st(_N);
+	std::vector<c_number4> h_vels(_N);
+	CUDA_SAFE_CALL(cudaMemcpy(h_st.data(), _d_st, sizeof(CUDAStressTensor) * _N, cudaMemcpyDeviceToHost));
+	CUDA_SAFE_CALL(cudaMemcpy(h_vels.data(), vels, sizeof(c_number4) * _N, cudaMemcpyDeviceToHost));
+
+	std::vector<StressTensor> particle_stress_tensors(_N);
+	for(int i = 0; i < _N; i++) {
+		if(_st_no_kinetic_part) {
+			particle_stress_tensors[i] = StressTensor({
+				h_st[i].e[0],
+				h_st[i].e[1],
+				h_st[i].e[2],
+				h_st[i].e[3],
+				h_st[i].e[4],
+				h_st[i].e[5]
+			});
+		}
+		else {
+			particle_stress_tensors[i] = StressTensor({
+				h_st[i].e[0] + SQR(h_vels[i].x),
+				h_st[i].e[1] + SQR(h_vels[i].y),
+				h_st[i].e[2] + SQR(h_vels[i].z),
+				h_st[i].e[3] + h_vels[i].x * h_vels[i].y,
+				h_st[i].e[4] + h_vels[i].x * h_vels[i].z,
+				h_st[i].e[5] + h_vels[i].y * h_vels[i].z
+			});
+		}
+	}
+
+	return particle_stress_tensors;
 }
 
 void CUDABaseInteraction::_hb_op_precalc(c_number4 *poss, GPU_quat *orientations, int *op_pairs1, int *op_pairs2, float *hb_energies, int n_threads, bool *region_is_nearhb, CUDA_kernel_cfg ffs_hb_precalc_kernel_cfg, CUDABox*d_box) {

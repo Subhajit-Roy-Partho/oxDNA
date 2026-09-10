@@ -71,7 +71,7 @@ struct __align__(16) CUDA_FS_bond_list {
 
 __device__ void _patchy_point_two_body_interaction(c_number4 &ppos, c_number4 &qpos, c_number4 &a1, c_number4 &a2, c_number4 &a3, c_number4 &b1,
 		c_number4 &b2, c_number4 &b3, c_number4 &F, c_number4 &torque, CUDA_FS_bond_list *bonds, int q_idx, cudaTextureObject_t tex_patchy_eps,
-		cudaTextureObject_t tex_base_patches, CUDAStressTensor &p_st, CUDABox *box) {
+		cudaTextureObject_t tex_base_patches, DetailedPatchySwapInteraction::StressTensorMode st_mode, CUDAStressTensor &p_st, CUDABox *box) {
 	int ptype = get_particle_btype(ppos);
 	int qtype = get_particle_btype(qpos);
 
@@ -102,7 +102,9 @@ __device__ void _patchy_point_two_body_interaction(c_number4 &ppos, c_number4 &q
 			spherical_energy - MD_spherical_E_cut[0]
 	};
 
-	_update_stress_tensor<true>(p_st, r, force);
+	if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_SPHERICAL) {
+		_update_stress_tensor<true>(p_st, r, force);
+	}
 	F += force;
 
 	int p_N_patches = MD_N_patches[ptype];
@@ -151,8 +153,9 @@ __device__ void _patchy_point_two_body_interaction(c_number4 &ppos, c_number4 &q
 						F.w += energy_part;
 						torque -= p_torque;
 
-						force = -tmp_force;
-						_update_stress_tensor<true>(p_st, r, force);
+						if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_PATCHY) {
+							_update_stress_tensor<true>(p_st, r, -tmp_force);
+						}
 
 						CUDA_FS_bond &my_bond = bonds[p_patch].new_bond();
 
@@ -178,7 +181,7 @@ __device__ void _patchy_point_two_body_interaction(c_number4 &ppos, c_number4 &q
 
 __device__ void _patchy_KF_two_body_interaction(c_number4 &ppos, c_number4 &qpos, c_number4 &a1, c_number4 &a2, c_number4 &a3, c_number4 &b1,
 		c_number4 &b2, c_number4 &b3, c_number4 &F, c_number4 &torque, CUDA_FS_bond_list *bonds, int q_idx, cudaTextureObject_t tex_patchy_eps,
-		cudaTextureObject_t tex_base_patches, CUDAStressTensor &p_st, CUDABox *box) {
+		cudaTextureObject_t tex_base_patches, DetailedPatchySwapInteraction::StressTensorMode st_mode, CUDAStressTensor &p_st, CUDABox *box) {
 	int ptype = get_particle_btype(ppos);
 	int qtype = get_particle_btype(qpos);
 
@@ -203,10 +206,16 @@ __device__ void _patchy_KF_two_body_interaction(c_number4 &ppos, c_number4 &qpos
 		spherical_energy = 4.f * (SQR(lj_part) - lj_part) + 1.f - MD_spherical_attraction_strength[0];
 	}
 
-	F.x -= r.x * force_module;
-	F.y -= r.y * force_module;
-	F.z -= r.z * force_module;
-	F.w += spherical_energy - MD_spherical_E_cut[0];
+	c_number4 force = {-r.x * force_module,
+			-r.y * force_module,
+			-r.z * force_module,
+			spherical_energy - MD_spherical_E_cut[0]
+	};
+
+	if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_SPHERICAL) {
+		_update_stress_tensor<true>(p_st, r, force);
+	}
+	F += force;
 
 	// patch-patch part
 	c_number rmod = sqrtf(sqr_r);
@@ -290,11 +299,13 @@ __device__ void _patchy_KF_two_body_interaction(c_number4 &ppos, c_number4 &qpos
 
 						c_number4 tot_force = radial_force + angular_force;
 
-						torque -= p_torque;
-						F.x -= tot_force.x;
-						F.y -= tot_force.y;
-						F.z -= tot_force.z;
+						F -= tot_force;
 						F.w += energy_part;
+						torque -= p_torque;
+
+						if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_PATCHY) {
+							_update_stress_tensor<true>(p_st, r, -tot_force);
+						}
 
 						if(energy_part < 0.f) {
 							CUDA_FS_bond &my_bond = bonds[p_patch].new_bond();
@@ -314,7 +325,7 @@ __device__ void _patchy_KF_two_body_interaction(c_number4 &ppos, c_number4 &qpos
 	}
 }
 
-__device__ void _three_body(CUDA_FS_bond_list *bonds, c_number4 &F, c_number4 &T, CUDAStressTensor &p_st, c_number4 *forces, c_number4 *torques) {
+__device__ void _three_body(CUDA_FS_bond_list *bonds, c_number4 &F, c_number4 &T, DetailedPatchySwapInteraction::StressTensorMode st_mode, CUDAStressTensor &p_st, c_number4 *forces, c_number4 *torques) {
 	for(int pi = 0; pi < CUDADetailedPatchySwapInteraction::MAX_PATCHES; pi++) {
 		CUDA_FS_bond_list &bond_list = bonds[pi];
 
@@ -341,7 +352,9 @@ __device__ void _three_body(CUDA_FS_bond_list *bonds, c_number4 &F, c_number4 &T
 				c_number4 tmp_force = b1.force * factor;
 				tmp_force.w = 0.f;
 
-				_update_stress_tensor<false>(p_st, b1.r, -tmp_force);
+				if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_THREE_BODY) {
+					_update_stress_tensor<false>(p_st, b1.r, -tmp_force);
+				}
 				F -= tmp_force;
 				LR_atomicAddXYZ(forces + b1.q, tmp_force);
 
@@ -354,7 +367,9 @@ __device__ void _three_body(CUDA_FS_bond_list *bonds, c_number4 &F, c_number4 &T
 				tmp_force = b2.force * factor;
 				tmp_force.w = 0.f;
 
-				_update_stress_tensor<false>(p_st, b2.r, -tmp_force);
+				if(st_mode == DetailedPatchySwapInteraction::ST_ALL || st_mode == DetailedPatchySwapInteraction::ST_THREE_BODY) {
+					_update_stress_tensor<false>(p_st, b2.r, -tmp_force);
+				}
 				F -= tmp_force;
 				LR_atomicAddXYZ(forces + b2.q, tmp_force);
 
@@ -367,7 +382,7 @@ __device__ void _three_body(CUDA_FS_bond_list *bonds, c_number4 &F, c_number4 &T
 
 __global__ void DPS_forces(c_number4 *poss, GPU_quat *orientations, c_number4 *forces, c_number4 *three_body_forces,
 		c_number4 *torques, c_number4 *three_body_torques, int *matrix_neighs, int *number_neighs, cudaTextureObject_t tex_patchy_eps,
-		cudaTextureObject_t tex_base_patches, bool update_st, CUDAStressTensor *st, CUDABox *box) {
+		cudaTextureObject_t tex_base_patches, bool update_st, DetailedPatchySwapInteraction::StressTensorMode st_mode, CUDAStressTensor *st, CUDABox *box) {
 	if(IND >= MD_N[0]) return;
 
 	c_number4 F = forces[IND];
@@ -390,15 +405,15 @@ __global__ void DPS_forces(c_number4 *poss, GPU_quat *orientations, c_number4 *f
 			GPU_quat qo = orientations[k_index];
 			get_vectors_from_quat(qo, b1, b2, b3);
 			if(MD_is_KF[0]) {
-				_patchy_KF_two_body_interaction(ppos, qpos, a1, a2, a3, b1, b2, b3, F, T, bonds, k_index, tex_patchy_eps, tex_base_patches, p_st, box);
+				_patchy_KF_two_body_interaction(ppos, qpos, a1, a2, a3, b1, b2, b3, F, T, bonds, k_index, tex_patchy_eps, tex_base_patches, st_mode, p_st, box);
 			}
 			else {
-				_patchy_point_two_body_interaction(ppos, qpos, a1, a2, a3, b1, b2, b3, F, T, bonds, k_index, tex_patchy_eps, tex_base_patches, p_st, box);
+				_patchy_point_two_body_interaction(ppos, qpos, a1, a2, a3, b1, b2, b3, F, T, bonds, k_index, tex_patchy_eps, tex_base_patches, st_mode, p_st, box);
 			}
 		}
 	}
 
-	_three_body(bonds, F, T, p_st, three_body_forces, three_body_torques);
+	_three_body(bonds, F, T, st_mode, p_st, three_body_forces, three_body_torques);
 
 	if(update_st) {
 		st[IND] = p_st;
@@ -543,7 +558,7 @@ void CUDADetailedPatchySwapInteraction::compute_forces(CUDABaseList *lists, c_nu
 	DPS_forces
 		<<<_launch_cfg.blocks, _launch_cfg.threads_per_block>>>
 		(d_poss, d_orientations, d_forces, _d_three_body_forces,  d_torques, _d_three_body_torques, lists->d_matrix_neighs,
-		lists->d_number_neighs, _tex_patchy_eps, _tex_base_patches, _update_st, _d_st, d_box);
+		lists->d_number_neighs, _tex_patchy_eps, _tex_base_patches, _update_st, _stress_tensor_mode, _d_st, d_box);
 	CUT_CHECK_ERROR("DPS_forces error");
 
 	// add the three body contributions to the two-body forces and torques
