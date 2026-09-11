@@ -64,7 +64,7 @@ These are the options that control the overall behaviour of the simulation and o
 * `[show_overwrite_warnings = <bool>]` Print a warning for each input file option overwritten (either in the input file itself or with command line arguments). Defaults to `true`.
 * `[equilibration_steps = <int>]`: number of equilibration steps. During equilibration, oxDNA does not generate any output. Defaults to `0`.
 * `[print_conf_ppc = <int>]`: this is the number of printed configurations in a single logarithmic cycle. Mandatory if `time_scale = log_lin`.
-* `[list_type = verlet|cells|no]`: type of neighbouring list to be used in CPU simulations. `no` implies a O(N^2) computational complexity. Defaults to `verlet`.
+* `[list_type = verlet|bin_verlet|cells|rodcells|no]`: type of neighbouring list to be used in CPU simulations. `no` implies a O(N^2) computational complexity. Defaults to `verlet`. Note that `bin_verlet` only supports systems containing (at most) two particle species (labelled 0 and 1), so it cannot be used with e.g. standard four-base DNA.
 * `[verlet_skin = <float>]`: width of the skin that controls the maximum displacement after which Verlet lists need to be updated. mandatory if `list_type = verlet`.
 
 ## Molecular dynamics options
@@ -104,7 +104,7 @@ These options control the behaviour of MD simulations.
 The following options require `backend = CUDA`.
 
 * `[use_edge = <bool>]`: parallelise computations over interacting pairs rather than particles. It often results in a performance increase. Defaults to `false`.
-* `[CUDA_list = no|verlet]`: neighbour lists for CUDA simulations. Defaults to `verlet`.
+* `[CUDA_list = no|verlet|bin_verlet]`: neighbour lists for CUDA simulations. Defaults to `verlet`.
 * `[cells_auto_optimisation = <bool>`: increase the size of the cells used to build Verlet lists if the total number of cells exceeds two times the number of nucleotides. Sometimes disabling this option increases performance. Used only if `CUDA_list = verlet`, defaults to `true`.
 * `[max_density_multiplier = <float>]`: scale the size of data structures that store neighbours and cell lists. it is sometime necessary to increase this value (which also increases the memory footprint of the simulation) if the local density of nucleotides is high and the simulation crashes. Defaults to `3`.
 * `[print_problematic_ids = <bool>]`: if `true`, the code will print the indexes of particles that have very large coordinates (which may be caused by incorrectly-defined external forces and/or large time steps) before exiting. Useful for debugging purposes. Defaults to `false`.

@@ -93,3 +93,6 @@ src/oxpy/_version.py
 # Encoder/Decoder 
 utils/PostSimulationCompression/encode_trj
 utils/PostSimulationCompression/decode_trj
+
+# Deepwork session state (local only, never commit)
+.slim/deepwork/

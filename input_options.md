@@ -108,9 +108,12 @@ Core options:
     verlet_skin = <float>
         width of the skin that controls the maximum displacement after which
         Verlet lists need to be updated.
-    [list_type = verlet|cells|no]
+    [list_type = verlet|bin_verlet|cells|rodcells|no]
         Type of neighbouring list to be used in CPU simulations. 'no' implies
-        a O(N^2) computational complexity. Defaults to verlet.
+        a O(N^2) computational complexity. Defaults to verlet. Note that
+        'bin_verlet' only supports systems containing (at most) two particle
+        species (labelled 0 and 1), so it cannot be used with e.g. standard
+        four-base DNA.
 
 -------------------------------------------------------------------------------
 
@@ -482,8 +485,8 @@ Interactions/RNAInteraction_relax.h options:
 
 CUDA options:
 
-    [CUDA_list = no|verlet]
-        Neighbour lists for CUDA simulations. Defaults to 'no'.
+    [CUDA_list = no|verlet|bin_verlet]
+        Neighbour lists for CUDA simulations. Defaults to 'verlet'.
     backend = CUDA
         For CUDA FFS -- NB unlike the CPU implementation, the CUDA
         implementation does not print extra columns with the current order
