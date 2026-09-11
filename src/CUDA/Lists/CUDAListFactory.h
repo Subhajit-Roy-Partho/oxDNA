@@ -14,7 +14,7 @@
  * @brief Static factory class. Its only public method builds a {@link CUDABaseList CUDA list}.
  *
  * @verbatim
-[CUDA_list = no|verlet (Neighbour lists for CUDA simulations. Defaults to 'no'.)]
+[CUDA_list = no|verlet|bin_verlet|cells (Neighbour lists for CUDA simulations. Defaults to 'verlet'.)]
 @endverbatim
  */
 class CUDAListFactory {

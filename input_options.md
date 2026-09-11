@@ -485,8 +485,10 @@ Interactions/RNAInteraction_relax.h options:
 
 CUDA options:
 
-    [CUDA_list = no|verlet|bin_verlet]
-        Neighbour lists for CUDA simulations. Defaults to 'verlet'.
+    [CUDA_list = no|verlet|bin_verlet|cells]
+        Neighbour lists for CUDA simulations. Defaults to 'verlet'. The
+        'cells' list rebuilds every step with zero skin (slower per step
+        than a skinned verlet list; orthorhombic-safe unlike bin_verlet).
     backend = CUDA
         For CUDA FFS -- NB unlike the CPU implementation, the CUDA
         implementation does not print extra columns with the current order

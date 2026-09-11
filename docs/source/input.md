@@ -104,8 +104,8 @@ These options control the behaviour of MD simulations.
 The following options require `backend = CUDA`.
 
 * `[use_edge = <bool>]`: parallelise computations over interacting pairs rather than particles. It often results in a performance increase. Defaults to `false`.
-* `[CUDA_list = no|verlet|bin_verlet]`: neighbour lists for CUDA simulations. Defaults to `verlet`.
-* `[cells_auto_optimisation = <bool>`: increase the size of the cells used to build Verlet lists if the total number of cells exceeds two times the number of nucleotides. Sometimes disabling this option increases performance. Used only if `CUDA_list = verlet`, defaults to `true`.
+* `[CUDA_list = no|verlet|bin_verlet|cells]`: neighbour lists for CUDA simulations. Defaults to `verlet`. The `cells` list rebuilds every step with zero skin (slower per step than a skinned verlet list; orthorhombic-safe unlike bin_verlet).
+* `[cells_auto_optimisation = <bool>`: increase the size of the cells used to build Verlet lists if the total number of cells exceeds two times the number of nucleotides. Sometimes disabling this option increases performance. Used only if `CUDA_list = verlet` or `CUDA_list = cells`, defaults to `true`.
 * `[max_density_multiplier = <float>]`: scale the size of data structures that store neighbours and cell lists. it is sometime necessary to increase this value (which also increases the memory footprint of the simulation) if the local density of nucleotides is high and the simulation crashes. Defaults to `3`.
 * `[print_problematic_ids = <bool>]`: if `true`, the code will print the indexes of particles that have very large coordinates (which may be caused by incorrectly-defined external forces and/or large time steps) before exiting. Useful for debugging purposes. Defaults to `false`.
 * `[CUDA_device = <int>]`: CUDA-enabled device to run the simulation on. If it is not specified or it is given a negative number, a suitable device will be automatically chosen.
