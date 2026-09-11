@@ -1,14 +1,6 @@
 backend = CPU
-# backend_precision = mixed # Metal precision determined by compile time flag mostly
-# if no CUDA_device is specified, then oxDNA will try to 
-# find a suitable device to run on.
-#CUDA_device = 3
-Metal_list = verlet
 interaction_type = DNA
 salt_concentration = 1.0
-# CUDA_sort_every = 0
-use_edge = 1
-edge_n_forces = 1
 seed = 19382
 debug = 1
 

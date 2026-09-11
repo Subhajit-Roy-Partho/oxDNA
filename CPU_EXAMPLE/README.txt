@@ -1,5 +1,5 @@
-CUDA example
+CPU example
 
-This example runs a short GPU-enabled simulation a system composed by 2048 double strands 
-(32768 nucleotides). Note that you need to compile oxDNA with CUDA support (add the flag
--DCUDA=ON to the cmake command) and have a working CUDA installation (CUDA >= 3.2 required). 
+This example runs a short simulation of a system composed of 2048 double strands
+(32768 nucleotides) on the CPU backend. Used as the accuracy/performance reference
+for the Metal_EXAMPLE benchmark.

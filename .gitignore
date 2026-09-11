@@ -16,6 +16,9 @@
 *.dylib
 *.dll
 
+# Compiled Metal shader libraries (built by CMake into build_metal*/bin/)
+*.metallib
+
 # Fortran module files
 *.mod
 *.smod
@@ -36,6 +39,7 @@ build/
 pybuild/
 build_metal/
 build_cpu/
+Testing/
 cuda/
 docs/oxpy/doctrees
 venv/

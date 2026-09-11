@@ -1,14 +1,9 @@
 backend = Metal
-# backend_precision = mixed # Metal precision determined by compile time flag mostly
-# if no CUDA_device is specified, then oxDNA will try to 
-# find a suitable device to run on.
-#CUDA_device = 3
-Metal_list = verlet
+backend_precision = float          # float | mixed | hardmixed (run-time choice, see BUILD_METAL.md)
+Metal_avoid_cpu_calculations = 1   # native GPU kernels for DNA/DNA2
+Metal_list = verlet                # verlet | edge | no
 interaction_type = DNA
 salt_concentration = 1.0
-# CUDA_sort_every = 0
-use_edge = 1
-edge_n_forces = 1
 seed = 19382
 debug = 1
 
@@ -22,8 +17,6 @@ newtonian_steps = 53
 max_backbone_force = 10.0
 max_density_multiplier = 20.0
 cells_auto_optimisation = 0
-use_edge = 0
-use_edge = 0
 
 steps = 2000
 # steps = 200000
