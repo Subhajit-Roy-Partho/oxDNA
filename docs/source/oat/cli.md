@@ -264,6 +264,17 @@ For nucleic acid structures converted to all-atom formats using `oxDNA_PDB`, it 
     :prog: oat pca
 ```
 
+## Protein charges
+
+Generates the `protein_charge_file` used by the optional screened protein electrostatics of the DNANM/DNACT interactions.
+
+```{eval-rst}
+.. argparse::
+    :filename: ../analysis/src/oxDNA_analysis_tools/protein_charges.py
+    :func: cli_parser
+    :prog: oat protein_charges
+```
+
 ## Skeleton
 
 ```{eval-rst}
